@@ -259,7 +259,7 @@ dependencies = [
 
 [[package]]
 name = "headroom"
-version = "1.5.1"
+version = "1.6.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -371,9 +371,9 @@ checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
 
 [[package]]
 name = "mp3rgain"
-version = "1.4.0"
+version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca89391bbed25159af68a701c4d784167ad831eb5f41b0fea9a7729bf159e77d"
+checksum = "2d1b9f28c8a5930722a7cfb337a548bf69cb42702e76bd4ec39e895dd165af9b"
 dependencies = [
  "anyhow",
  "colored",

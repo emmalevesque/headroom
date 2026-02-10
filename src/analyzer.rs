@@ -146,73 +146,49 @@ fn get_target_true_peak(is_lossy: bool, bitrate_kbps: Option<u32>) -> f64 {
     }
 }
 
-/// Extract loudnorm JSON from ffmpeg stderr output.
-/// The loudnorm filter outputs JSON after "[Parsed_loudnorm_0 @" marker.
-/// This is more reliable than searching for the first '{' which may match
-/// binary data in GEOB/PRIV ID3v2 frames.
-fn extract_loudnorm_json(stderr: &str, path: &Path) -> Result<LoudnormOutput> {
-    // Look for the loudnorm marker that precedes the JSON output
-    let marker = "[Parsed_loudnorm_0 @";
-
-    if let Some(marker_pos) = stderr.find(marker) {
-        // Find the JSON block after the marker
-        let after_marker = &stderr[marker_pos..];
-        if let Some(json_start) = after_marker.find('{') {
-            let json_section = &after_marker[json_start..];
-            // Find the matching closing brace by counting braces
-            // The loudnorm JSON is a simple flat object, but we handle nesting just in case
-            let mut depth = 0;
-            let mut json_end = None;
-            for (i, ch) in json_section.char_indices() {
-                match ch {
-                    '{' => depth += 1,
-                    '}' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            json_end = Some(i);
-                            break;
-                        }
-                    }
-                    _ => {}
+/// Extract the first balanced `{...}` JSON object from a string slice.
+fn extract_json_object(s: &str) -> Option<&str> {
+    let start = s.find('{')?;
+    let section = &s[start..];
+    let mut depth = 0;
+    for (i, ch) in section.char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&section[..=i]);
                 }
             }
-            if let Some(end) = json_end {
-                let json_str = &json_section[..=end];
-                return serde_json::from_str(json_str).with_context(|| {
-                    format!(
-                        "Failed to parse loudnorm JSON. Run: ffmpeg -nostdin -i \"{}\" -map 0:a:0 -af loudnorm=print_format=json -f null - 2>&1 | tail -20",
-                        path.display()
-                    )
-                });
-            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Extract loudnorm JSON from ffmpeg stderr output.
+///
+/// Uses the `[Parsed_loudnorm_0 @` marker to locate the JSON, avoiding false
+/// matches from binary data in GEOB/PRIV ID3v2 frames.
+fn extract_loudnorm_json(stderr: &str, path: &Path) -> Result<LoudnormOutput> {
+    let marker = "[Parsed_loudnorm_0 @";
+
+    // Primary: find JSON after the loudnorm marker
+    if let Some(marker_pos) = stderr.find(marker) {
+        if let Some(json_str) = extract_json_object(&stderr[marker_pos..]) {
+            return serde_json::from_str(json_str).with_context(|| {
+                format!(
+                    "Failed to parse loudnorm JSON. Run: ffmpeg -nostdin -i \"{}\" -map 0:a:0 -af loudnorm=print_format=json -f null - 2>&1 | tail -20",
+                    path.display()
+                )
+            });
         }
     }
 
-    // Fallback: try to find any valid loudnorm JSON (for older ffmpeg versions)
-    // Search backwards from the end of output for JSON blocks containing "input_i"
-    // This avoids matching binary data in GEOB/PRIV frames that may contain '{' characters
+    // Fallback for older ffmpeg: search backwards for a JSON block containing "input_i"
     if let Some(input_i_pos) = stderr.rfind("\"input_i\"") {
-        // Find the opening brace before "input_i"
-        if let Some(json_start) = stderr[..input_i_pos].rfind('{') {
-            let json_section = &stderr[json_start..];
-            // Find the matching closing brace
-            let mut depth = 0;
-            let mut json_end = None;
-            for (i, ch) in json_section.char_indices() {
-                match ch {
-                    '{' => depth += 1,
-                    '}' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            json_end = Some(i);
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            if let Some(end) = json_end {
-                let json_str = &json_section[..=end];
+        if let Some(brace_pos) = stderr[..input_i_pos].rfind('{') {
+            if let Some(json_str) = extract_json_object(&stderr[brace_pos..]) {
                 if let Ok(loudnorm) = serde_json::from_str::<LoudnormOutput>(json_str) {
                     return Ok(loudnorm);
                 }
@@ -220,7 +196,6 @@ fn extract_loudnorm_json(stderr: &str, path: &Path) -> Result<LoudnormOutput> {
         }
     }
 
-    // No valid loudnorm JSON found
     Err(anyhow!(
         "No loudnorm data found in ffmpeg output. \
          This may be caused by:\n\
@@ -253,8 +228,6 @@ pub fn analyze_file(path: &Path) -> Result<AudioAnalysis> {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // Extract loudnorm JSON from ffmpeg output
-    // The loudnorm filter outputs JSON after "[Parsed_loudnorm_0 @" marker
     let loudnorm: LoudnormOutput = extract_loudnorm_json(&stderr, path)?;
 
     let input_i: f64 = loudnorm
@@ -269,7 +242,6 @@ pub fn analyze_file(path: &Path) -> Result<AudioAnalysis> {
     let is_mp3 = scanner::is_mp3(path);
     let is_aac = scanner::is_aac(path);
 
-    // Get bitrate for lossy files (MP3 and AAC)
     let bitrate_kbps = if is_mp3 || is_aac {
         get_bitrate(path)
     } else {
@@ -280,40 +252,20 @@ pub fn analyze_file(path: &Path) -> Result<AudioAnalysis> {
     let target_tp = get_target_true_peak(is_lossy, bitrate_kbps);
     let headroom = target_tp - input_tp;
 
-    let (gain_method, effective_gain, mp3_gain_steps) = if is_aac {
-        // AAC: always requires re-encode
-        if headroom >= MIN_EFFECTIVE_GAIN {
-            (GainMethod::AacReencode, headroom, 0)
-        } else {
-            (GainMethod::None, 0.0, 0)
-        }
+    let (gain_method, effective_gain, mp3_gain_steps) = if headroom < MIN_EFFECTIVE_GAIN {
+        (GainMethod::None, 0.0, 0)
+    } else if is_aac {
+        (GainMethod::AacReencode, headroom, 0)
     } else if !is_lossy {
-        // Lossless: use ffmpeg
-        if headroom >= MIN_EFFECTIVE_GAIN {
-            (GainMethod::FfmpegLossless, headroom, 0)
-        } else {
-            (GainMethod::None, 0.0, 0)
-        }
+        (GainMethod::FfmpegLossless, headroom, 0)
     } else {
-        // MP3 file: check if lossless gain is possible
-        // Use bitrate-aware ceiling: high bitrate targets -0.5 dBTP, low bitrate targets -1.0 dBTP
-        let lossless_ceiling = if bitrate_kbps.unwrap_or(0) >= HIGH_BITRATE_THRESHOLD {
-            TARGET_TRUE_PEAK_HIGH_QUALITY // -0.5 dBTP
-        } else {
-            TARGET_TRUE_PEAK_LOW_BITRATE // -1.0 dBTP
-        };
-        let lossless_headroom = lossless_ceiling - input_tp;
-        let lossless_steps = (lossless_headroom / MP3_GAIN_STEP).floor() as i32;
-
+        // MP3: try lossless gain in 1.5dB steps, fall back to re-encode
+        let lossless_steps = (headroom / MP3_GAIN_STEP).floor() as i32;
         if lossless_steps >= 1 {
-            // Can use lossless MP3 gain (at least 1.5dB gain possible within bitrate-aware ceiling)
             let effective = lossless_steps as f64 * MP3_GAIN_STEP;
             (GainMethod::Mp3Lossless, effective, lossless_steps)
-        } else if headroom >= MIN_EFFECTIVE_GAIN {
-            // Has headroom but not enough for lossless, needs re-encode
-            (GainMethod::Mp3Reencode, headroom, 0)
         } else {
-            (GainMethod::None, 0.0, 0)
+            (GainMethod::Mp3Reencode, headroom, 0)
         }
     };
 
