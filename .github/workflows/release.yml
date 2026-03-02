@@ -315,15 +315,12 @@ jobs:
             | **macOS (Homebrew)** | `brew install M-Igashi/tap/headroom` |
             | **Windows (Scoop)** | `scoop bucket add headroom https://github.com/M-Igashi/scoop-bucket && scoop install headroom` |
             | **Windows (winget)** | `winget install M-Igashi.headroom` |
-            | **Cargo** | `cargo install headroom` |
+            | **Cargo** | `cargo install headroom` (ffmpeg must be installed separately) |
 
-            **Dependencies:** ffmpeg and mp3rgain must be installed separately.
+            Package managers (Homebrew, Scoop, winget) install ffmpeg automatically. mp3rgain is built-in — no separate installation needed.
 
             ## Checksums
             See `headroom-${{ steps.version.outputs.VERSION }}-checksums.txt` for SHA256 checksums of all binaries.
-
-            ## Note
-            mp3rgain is now built-in as a library dependency. No separate installation required.
 
   # =============================================================================
   # Publish to Cargo (crates.io)
