@@ -14,7 +14,7 @@ This tool is designed for DJs and producers who want to maximize loudness while 
 - **Smart True Peak ceiling**: Based on AES TD1008, uses -0.5 dBTP for high-quality files, -1.0 dBTP for low-bitrate
 - **Multiple processing methods**: ffmpeg for lossless formats, built-in mp3rgain for lossless MP3/AAC gain, ffmpeg re-encode for precise gain
 - **Non-destructive workflow**: Original files are backed up before processing
-- **Metadata preservation**: Files are overwritten in place, so Rekordbox tags, cue points, and other metadata remain intact
+- **Metadata preservation**: Audio tags (ID3v2, Vorbis comment, BWF) are preserved during processing, and files are overwritten in place so Rekordbox cue points and other external metadata remain linked
 - **No limiter**: Pure gain adjustment only — dynamics are preserved
 - **Interactive CLI**: Guided step-by-step process with two-stage confirmation
 
