@@ -6,7 +6,7 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   # =============================================================================
@@ -224,6 +224,8 @@ jobs:
   release:
     needs: [build-macos, build-linux-x86_64, build-linux-aarch64, build-windows]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     outputs:
       version: ${{ steps.version.outputs.VERSION }}
       version_num: ${{ steps.version.outputs.VERSION_NUM }}
@@ -313,11 +315,10 @@ jobs:
             | Platform | Command |
             |----------|---------|
             | **macOS (Homebrew)** | `brew install M-Igashi/tap/headroom` |
-            | **Windows (Scoop)** | `scoop bucket add headroom https://github.com/M-Igashi/scoop-bucket && scoop install headroom` |
             | **Windows (winget)** | `winget install M-Igashi.headroom` |
             | **Cargo** | `cargo install headroom` (ffmpeg must be installed separately) |
 
-            Package managers (Homebrew, Scoop, winget) install ffmpeg automatically. mp3rgain is built-in — no separate installation needed.
+            Package managers (Homebrew, winget) install ffmpeg automatically. mp3rgain is built-in — no separate installation needed.
 
             ## Checksums
             See `headroom-${{ steps.version.outputs.VERSION }}-checksums.txt` for SHA256 checksums of all binaries.
@@ -354,10 +355,10 @@ jobs:
       - name: Update Homebrew formula
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ needs.release.outputs.version }}
+          VERSION_NUM: ${{ needs.release.outputs.version_num }}
+          SHA256: ${{ needs.release.outputs.macos_sha256 }}
         run: |
-          VERSION="${{ needs.release.outputs.version }}"
-          VERSION_NUM="${{ needs.release.outputs.version_num }}"
-          SHA256="${{ needs.release.outputs.macos_sha256 }}"
 
           git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/M-Igashi/homebrew-tap.git
           cd homebrew-tap
@@ -400,55 +401,3 @@ jobs:
           git commit -m "headroom ${VERSION_NUM}"
           git push
 
-  # =============================================================================
-  # Update Scoop (Windows)
-  # =============================================================================
-
-  update-scoop:
-    needs: [release]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Update Scoop bucket
-        env:
-          SCOOP_BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
-        run: |
-          VERSION="${{ needs.release.outputs.version }}"
-          VERSION_NUM="${{ needs.release.outputs.version_num }}"
-          SHA256="${{ needs.release.outputs.windows_sha256 }}"
-
-          git clone https://x-access-token:${SCOOP_BUCKET_TOKEN}@github.com/M-Igashi/scoop-bucket.git
-          cd scoop-bucket
-
-          cat > bucket/headroom.json << MANIFEST
-          {
-              "version": "${VERSION_NUM}",
-              "description": "Audio loudness analyzer and gain adjustment tool for mastering and DJ workflows",
-              "homepage": "https://github.com/M-Igashi/headroom",
-              "license": "MIT",
-              "architecture": {
-                  "64bit": {
-                      "url": "https://github.com/M-Igashi/headroom/releases/download/${VERSION}/headroom-${VERSION}-windows-x86_64.zip",
-                      "hash": "${SHA256}",
-                      "bin": "headroom.exe"
-                  }
-              },
-              "depends": "ffmpeg",
-              "notes": "mp3rgain is now built-in as a library dependency. No separate installation required.",
-              "checkver": {
-                  "github": "https://github.com/M-Igashi/headroom"
-              },
-              "autoupdate": {
-                  "architecture": {
-                      "64bit": {
-                          "url": "https://github.com/M-Igashi/headroom/releases/download/v\$version/headroom-v\$version-windows-x86_64.zip"
-                      }
-                  }
-              }
-          }
-          MANIFEST
-
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add bucket/headroom.json
-          git commit -m "headroom ${VERSION_NUM}"
-          git push
