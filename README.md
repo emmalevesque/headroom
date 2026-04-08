@@ -137,6 +137,7 @@ headroom requires ffmpeg. Package managers install it automatically.
 |----------|---------|
 | **macOS (Homebrew)** | `brew install M-Igashi/tap/headroom` |
 | **Windows (winget)** | `winget install M-Igashi.headroom` |
+| **Arch Linux (AUR)** | `yay -S headroom-bin` |
 | **Cargo** | `cargo install headroom` (ffmpeg must be installed separately) |
 
 Pre-built binaries are available on the [Releases](https://github.com/M-Igashi/headroom/releases) page (ffmpeg must be installed separately).
