@@ -17,6 +17,7 @@ This tool is designed for DJs and producers who want to maximize loudness while 
 - **Metadata preservation**: Audio tags (ID3v2, Vorbis comment, BWF) are preserved during processing, and files are overwritten in place so Rekordbox cue points and other external metadata remain linked
 - **No limiter**: Pure gain adjustment only — dynamics are preserved
 - **Interactive CLI**: Guided step-by-step process with two-stage confirmation
+- **Scriptable CLI**: Non-interactive mode for pipelines and CI (paths, globs, and flags)
 
 ## Processing Methods
 
