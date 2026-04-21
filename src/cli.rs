@@ -8,25 +8,27 @@ use std::path::{Path, PathBuf};
 
 use crate::analyzer::{self, AudioAnalysis, GainMethod, MIN_EFFECTIVE_GAIN};
 use crate::args::Cli;
+use crate::config::Config;
 use crate::processor;
 use crate::report::{self, AnalysisSummary};
 use crate::scanner;
 
 pub fn run() -> Result<()> {
     let cli = Cli::parse();
+    let config = Config::load();
 
     print_banner();
 
     analyzer::check_ffmpeg()?;
 
     if cli.is_non_interactive() {
-        run_scriptable(&cli)
+        run_scriptable(&cli, &config)
     } else {
-        run_interactive()
+        run_interactive(&config)
     }
 }
 
-fn run_interactive() -> Result<()> {
+fn run_interactive(config: &Config) -> Result<()> {
     let target_dir = std::env::current_dir().context("Failed to get current directory")?;
 
     println!(
@@ -89,7 +91,7 @@ fn run_interactive() -> Result<()> {
 
     if tag_only {
         let files_to_tag: Vec<_> = all_analyses.iter().filter(|a| a.has_headroom()).collect();
-        tag_files_only(&files_to_tag)?;
+        tag_files_only(&files_to_tag, &config.comment.separator)?;
         println!(
             "\n{} Done! Gain tag written to {} files (no audio modified).",
             style("✓").green().bold(),
@@ -131,7 +133,7 @@ fn run_interactive() -> Result<()> {
 
         let create_backup = Confirm::with_theme(&ColorfulTheme::default())
             .with_prompt("Create backup before processing?")
-            .default(true)
+            .default(config.defaults.backup)
             .interact()?;
         let backup_dir = if create_backup {
             let dir = processor::create_backup_dir(&target_dir)?;
@@ -143,7 +145,7 @@ fn run_interactive() -> Result<()> {
 
         let tag_comment = Confirm::with_theme(&ColorfulTheme::default())
             .with_prompt("Prepend effective gain to ID3v2 comment field?")
-            .default(false)
+            .default(config.defaults.tag_comment)
             .interact()?;
 
         soft_clip_files(
@@ -154,6 +156,7 @@ fn run_interactive() -> Result<()> {
             &target_dir,
             backup_dir.as_deref(),
             tag_comment,
+            &config.comment.separator,
         )?;
 
         println!(
@@ -179,7 +182,7 @@ fn run_interactive() -> Result<()> {
 
     let create_backup = Confirm::with_theme(&ColorfulTheme::default())
         .with_prompt("Create backup before processing?")
-        .default(true)
+        .default(config.defaults.backup)
         .interact()?;
 
     let backup_dir = if create_backup {
@@ -192,7 +195,7 @@ fn run_interactive() -> Result<()> {
 
     let tag_comment = Confirm::with_theme(&ColorfulTheme::default())
         .with_prompt("Prepend effective gain to ID3v2 comment field?")
-        .default(false)
+        .default(config.defaults.tag_comment)
         .interact()?;
 
     let files_to_process: Vec<_> = all_analyses
@@ -205,14 +208,14 @@ fn run_interactive() -> Result<()> {
         return Ok(());
     }
 
-    process_files(&files_to_process, &target_dir, backup_dir.as_deref(), tag_comment)?;
+    process_files(&files_to_process, &target_dir, backup_dir.as_deref(), tag_comment, &config.comment.separator)?;
 
     print_final_summary(&files_to_process);
 
     Ok(())
 }
 
-fn run_scriptable(cli: &Cli) -> Result<()> {
+fn run_scriptable(cli: &Cli, config: &Config) -> Result<()> {
     let (files, base_dir) = if cli.paths.is_empty() {
         let cwd = std::env::current_dir().context("Failed to get current directory")?;
         (scanner::scan_audio_files(&cwd), cwd)
@@ -255,7 +258,7 @@ fn run_scriptable(cli: &Cli) -> Result<()> {
 
     let processable_analyses: Vec<_> = all_analyses.iter().filter(|a| a.has_headroom()).collect();
 
-    if cli.report_enabled() {
+    if cli.report_enabled(config.defaults.report) {
         let explicit_path = cli.report.as_ref().and_then(|p| {
             if p.as_os_str().is_empty() {
                 None
@@ -282,7 +285,7 @@ fn run_scriptable(cli: &Cli) -> Result<()> {
             println!("{} No files with enough headroom to tag.", style("ℹ").blue());
             return Ok(());
         }
-        tag_files_only(&files_to_tag)?;
+        tag_files_only(&files_to_tag, &config.comment.separator)?;
         println!(
             "\n{} Done! Gain tag written to {} files (no audio modified).",
             style("✓").green().bold(),
@@ -310,7 +313,7 @@ fn run_scriptable(cli: &Cli) -> Result<()> {
             &cli.soft_clip_type,
         );
 
-        if cli.report_enabled() {
+        if cli.report_enabled(config.defaults.report) {
             let explicit_path = cli.report.as_ref().and_then(|p| {
                 if p.as_os_str().is_empty() { None } else { Some(p.as_path()) }
             });
@@ -325,18 +328,9 @@ fn run_scriptable(cli: &Cli) -> Result<()> {
             println!("{} Report saved: {}", style("✓").green(), csv_path.display());
         }
 
-        let backup_dir = if let Some(path) = &cli.backup {
-            let dir = if path.as_os_str().is_empty() {
-                processor::create_backup_dir(&base_dir)?
-            } else {
-                std::fs::create_dir_all(path).context("Failed to create backup directory")?;
-                path.clone()
-            };
-            println!("{} Backup directory: {}", style("✓").green(), dir.display());
-            Some(dir)
-        } else {
-            None
-        };
+        let backup_dir = resolve_backup_dir(cli, config, &base_dir)?;
+
+        let tag_comment = (cli.tag_comment || config.defaults.tag_comment) && !cli.no_tag_comment;
 
         soft_clip_files(
             &candidates,
@@ -345,7 +339,8 @@ fn run_scriptable(cli: &Cli) -> Result<()> {
             &cli.soft_clip_type,
             &base_dir,
             backup_dir.as_deref(),
-            cli.tag_comment,
+            tag_comment,
+            &config.comment.separator,
         )?;
 
         println!(
@@ -358,8 +353,8 @@ fn run_scriptable(cli: &Cli) -> Result<()> {
         return Ok(());
     }
 
-    let lossless_on = cli.lossless_enabled();
-    let reencode_on = cli.reencode_enabled();
+    let lossless_on = cli.lossless_enabled(config.defaults.lossless);
+    let reencode_on = cli.reencode_enabled(config.defaults.reencode);
 
     let files_to_process: Vec<_> = all_analyses
         .iter()
@@ -380,20 +375,11 @@ fn run_scriptable(cli: &Cli) -> Result<()> {
         return Ok(());
     }
 
-    let backup_dir = if let Some(path) = &cli.backup {
-        let dir = if path.as_os_str().is_empty() {
-            processor::create_backup_dir(&base_dir)?
-        } else {
-            std::fs::create_dir_all(path).context("Failed to create backup directory")?;
-            path.clone()
-        };
-        println!("{} Backup directory: {}", style("✓").green(), dir.display());
-        Some(dir)
-    } else {
-        None
-    };
+    let backup_dir = resolve_backup_dir(cli, config, &base_dir)?;
 
-    process_files(&files_to_process, &base_dir, backup_dir.as_deref(), cli.tag_comment)?;
+    let tag_comment = (cli.tag_comment || config.defaults.tag_comment) && !cli.no_tag_comment;
+
+    process_files(&files_to_process, &base_dir, backup_dir.as_deref(), tag_comment, &config.comment.separator)?;
 
     print_final_summary(&files_to_process);
 
@@ -571,6 +557,22 @@ fn analyze_files(files: &[PathBuf]) -> Result<Vec<AudioAnalysis>> {
     Ok(analyses)
 }
 
+fn resolve_backup_dir(cli: &Cli, config: &Config, base_dir: &Path) -> Result<Option<PathBuf>> {
+    let want_backup = (cli.backup.is_some() || config.defaults.backup) && !cli.no_backup;
+    if !want_backup {
+        return Ok(None);
+    }
+    let dir = match &cli.backup {
+        Some(p) if !p.as_os_str().is_empty() => {
+            std::fs::create_dir_all(p).context("Failed to create backup directory")?;
+            p.clone()
+        }
+        _ => processor::create_backup_dir(base_dir)?,
+    };
+    println!("{} Backup directory: {}", style("✓").green(), dir.display());
+    Ok(Some(dir))
+}
+
 fn filter_soft_clip_candidates(analyses: &[AudioAnalysis], target_lufs: f64) -> Vec<&AudioAnalysis> {
     analyses
         .iter()
@@ -586,6 +588,7 @@ fn soft_clip_files(
     base_dir: &Path,
     backup_dir: Option<&Path>,
     tag_comment: bool,
+    separator: &str,
 ) -> Result<()> {
     let pb = ProgressBar::new(analyses.len() as u64);
     pb.set_style(
@@ -623,7 +626,7 @@ fn soft_clip_files(
                 e
             )),
             Ok(()) if tag_comment => {
-                if let Err(e) = processor::write_gain_comment(&analysis.path, gain_db) {
+                if let Err(e) = processor::write_gain_comment(&analysis.path, gain_db, separator) {
                     pb.println(format!(
                         "{} {}: comment tag: {}",
                         style("⚠").yellow(),
@@ -641,7 +644,7 @@ fn soft_clip_files(
     Ok(())
 }
 
-fn tag_files_only(analyses: &[&AudioAnalysis]) -> Result<()> {
+fn tag_files_only(analyses: &[&AudioAnalysis], separator: &str) -> Result<()> {
     let pb = ProgressBar::new(analyses.len() as u64);
     pb.set_style(
         ProgressStyle::default_bar()
@@ -651,7 +654,9 @@ fn tag_files_only(analyses: &[&AudioAnalysis]) -> Result<()> {
     );
 
     for analysis in analyses {
-        if let Err(e) = processor::write_gain_comment(&analysis.path, analysis.effective_gain) {
+        if let Err(e) =
+            processor::write_gain_comment(&analysis.path, analysis.effective_gain, separator)
+        {
             pb.println(format!(
                 "{} {}: comment tag: {}",
                 style("⚠").yellow(),
@@ -671,6 +676,7 @@ fn process_files(
     base_dir: &std::path::Path,
     backup_dir: Option<&std::path::Path>,
     tag_comment: bool,
+    separator: &str,
 ) -> Result<()> {
     let pb = ProgressBar::new(analyses.len() as u64);
     pb.set_style(
@@ -689,9 +695,11 @@ fn process_files(
                 e
             )),
             Ok(()) if tag_comment => {
-                if let Err(e) =
-                    processor::write_gain_comment(&analysis.path, analysis.effective_gain)
-                {
+                if let Err(e) = processor::write_gain_comment(
+                    &analysis.path,
+                    analysis.effective_gain,
+                    separator,
+                ) {
                     pb.println(format!(
                         "{} {}: comment tag: {}",
                         style("⚠").yellow(),

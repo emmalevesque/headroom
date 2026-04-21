@@ -205,7 +205,7 @@ pub fn apply_gain_aac_reencode(
 /// Only applies to formats that natively embed ID3v2 tags (MP3, AIFF).
 /// Other formats (FLAC, WAV) are silently skipped.
 /// Any existing comments with non-empty descriptions are preserved.
-pub fn write_gain_comment(path: &Path, gain_db: f64) -> Result<()> {
+pub fn write_gain_comment(path: &Path, gain_db: f64, separator: &str) -> Result<()> {
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
@@ -231,7 +231,7 @@ pub fn write_gain_comment(path: &Path, gain_db: f64) -> Result<()> {
     let new_text = if existing_text.is_empty() {
         gain_prefix
     } else {
-        format!("{} | {}", gain_prefix, existing_text)
+        format!("{}{}{}", gain_prefix, separator, existing_text)
     };
 
     // Preserve comments with non-empty descriptions; replace the default one
