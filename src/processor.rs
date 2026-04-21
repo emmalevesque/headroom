@@ -257,6 +257,111 @@ pub fn write_gain_comment(path: &Path, gain_db: f64) -> Result<()> {
     Ok(())
 }
 
+/// Build the ffmpeg filter chain string for soft clipping.
+/// Extracted as a pure function for testability.
+fn build_soft_clip_filter(gain_db: f64, threshold_db: f64, clip_type: &str) -> String {
+    let threshold_linear = 10_f64.powf(threshold_db / 20.0);
+    format!(
+        "volume={:.2}dB,asoftclip=type={}:threshold={:.6}",
+        gain_db, clip_type, threshold_linear
+    )
+}
+
+/// Apply soft clip processing via ffmpeg's `asoftclip` filter.
+///
+/// Boosts the signal by `gain_db` (caller computes this as `target_lufs - analysis.input_i`)
+/// then applies soft saturation so peaks above `threshold_db` dBFS are shaped rather than
+/// hard-clipped. All formats are re-encoded since the audio data changes.
+pub fn apply_soft_clip(
+    file_path: &Path,
+    gain_db: f64,
+    threshold_db: f64,
+    clip_type: &str,
+    bitrate_kbps: Option<u32>,
+) -> Result<()> {
+    let extension = file_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("wav");
+    let ext_lower = extension.to_lowercase();
+    let temp_path = file_path.with_extension(format!("tmp.{}", extension));
+
+    let filter = build_soft_clip_filter(gain_db, threshold_db, clip_type);
+    let input = path_str(file_path)?;
+    let temp = path_str(&temp_path)?;
+
+    // MP3
+    if ext_lower == "mp3" {
+        let bitrate = bitrate_kbps
+            .map(|k| format!("{}k", k))
+            .unwrap_or_else(|| "320k".to_string());
+        let args = [
+            "-y", "-i", input, "-af", &filter, "-c:a", "libmp3lame", "-b:a", &bitrate, temp,
+        ];
+        let output = Command::new("ffmpeg")
+            .args(args)
+            .output()
+            .context("Failed to execute ffmpeg for soft clip (MP3)")?;
+        if !output.status.success() {
+            let _ = fs::remove_file(&temp_path);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow!("ffmpeg soft clip (MP3) failed: {}", stderr));
+        }
+        return replace_file_with_temp(file_path, &temp_path);
+    }
+
+    // AAC — try libfdk_aac first, fall back to built-in aac
+    if matches!(ext_lower.as_str(), "m4a" | "aac" | "mp4") {
+        let bitrate = bitrate_kbps
+            .map(|k| format!("{}k", k))
+            .unwrap_or_else(|| "256k".to_string());
+        for encoder in ["libfdk_aac", "aac"] {
+            let args = [
+                "-y", "-i", input, "-af", &filter, "-c:a", encoder, "-b:a", &bitrate, temp,
+            ];
+            let output = Command::new("ffmpeg").args(args).output();
+            if let Ok(out) = output {
+                if out.status.success() {
+                    return replace_file_with_temp(file_path, &temp_path);
+                }
+            }
+            let _ = fs::remove_file(&temp_path);
+        }
+        return Err(anyhow!(
+            "ffmpeg AAC soft clip failed with all available encoders"
+        ));
+    }
+
+    // Lossless: FLAC / AIFF / WAV — mirror apply_gain_ffmpeg codec selection
+    let mut args = vec!["-y", "-i", input, "-af", &filter];
+    match ext_lower.as_str() {
+        "flac" => {
+            args.extend(["-c:a", "flac"]);
+        }
+        "aiff" | "aif" => {
+            args.extend(["-c:a", "pcm_s24be", "-write_id3v2", "1"]);
+        }
+        "wav" => {
+            args.extend(["-c:a", "pcm_s24le", "-write_bext", "1"]);
+        }
+        _ => {}
+    }
+    args.push(temp);
+
+    let output = Command::new("ffmpeg")
+        .args(&args)
+        .output()
+        .context("Failed to execute ffmpeg for soft clip (lossless)")?;
+
+    if !output.status.success() {
+        let _ = fs::remove_file(&temp_path);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("ffmpeg soft clip (lossless) failed: {}", stderr));
+    }
+
+    replace_file_with_temp(file_path, &temp_path)
+}
+
 pub fn process_file(
     file_path: &Path,
     analysis: &AudioAnalysis,
@@ -282,5 +387,28 @@ pub fn process_file(
             apply_gain_aac_reencode(file_path, analysis.effective_gain, analysis.bitrate_kbps)
         }
         GainMethod::None => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_soft_clip_filter() {
+        let f = build_soft_clip_filter(3.5, -1.0, "tanh");
+        assert!(f.starts_with("volume=3.50dB"), "unexpected filter: {}", f);
+        assert!(f.contains("asoftclip=type=tanh"), "unexpected filter: {}", f);
+        // threshold_linear for -1.0 dBFS ≈ 0.891251
+        assert!(f.contains("threshold=0.891"), "unexpected filter: {}", f);
+    }
+
+    #[test]
+    fn test_build_soft_clip_filter_zero_threshold() {
+        let f = build_soft_clip_filter(0.0, 0.0, "atan");
+        assert!(f.contains("volume=0.00dB"), "unexpected filter: {}", f);
+        assert!(f.contains("asoftclip=type=atan"), "unexpected filter: {}", f);
+        // threshold_linear for 0.0 dBFS = 1.000000
+        assert!(f.contains("threshold=1.000000"), "unexpected filter: {}", f);
     }
 }

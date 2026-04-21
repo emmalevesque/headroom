@@ -39,6 +39,9 @@ mp3rgain = { version = "2.2", default-features = false, features = ["aac"] }
 # ID3v2 tag reading/writing
 id3 = "1"
 
+# Config file parsing
+toml = "0.8"
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

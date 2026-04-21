@@ -21,7 +21,7 @@ pub const GAIN_STEP: f64 = mp3rgain::GAIN_STEP_DB;
 
 /// Minimum effective gain threshold (dB)
 /// Files with less headroom than this are skipped
-const MIN_EFFECTIVE_GAIN: f64 = 0.05;
+pub const MIN_EFFECTIVE_GAIN: f64 = 0.05;
 
 /// Processing method for the file
 #[derive(Debug, Clone, PartialEq)]

@@ -46,6 +46,26 @@ pub struct Cli {
     /// Prepend effective gain to the ID3v2 comment (COMM) field of each processed file
     #[arg(long)]
     pub tag_comment: bool,
+
+    /// Write suggested gain to ID3v2 comment tag without applying gain to audio
+    #[arg(long, conflicts_with_all = ["analyze_only", "tag_comment"])]
+    pub tag_comment_only: bool,
+
+    /// Boost to target LUFS-I and apply soft clipping (alternative to lossless gain)
+    #[arg(long, conflicts_with_all = ["lossless", "no_lossless", "reencode", "no_reencode", "tag_comment_only"])]
+    pub soft_clip: bool,
+
+    /// Target integrated loudness in LUFS-I for soft clip mode (default: -14.0)
+    #[arg(long, value_name = "LUFS", default_value_t = -14.0)]
+    pub soft_clip_target: f64,
+
+    /// Soft clip threshold in dBFS — point at which clipping begins (default: -1.0)
+    #[arg(long, value_name = "DBFS", default_value_t = -1.0)]
+    pub soft_clip_threshold: f64,
+
+    /// Soft clip algorithm: tanh, atan, cubic, exp, alg, quintic, sin, erf (default: tanh)
+    #[arg(long, value_name = "TYPE", default_value = "tanh")]
+    pub soft_clip_type: String,
 }
 
 impl Cli {
@@ -61,6 +81,8 @@ impl Cli {
             || self.no_report
             || self.analyze_only
             || self.tag_comment
+            || self.tag_comment_only
+            || self.soft_clip
     }
 
     /// Whether lossless processing is enabled in non-interactive mode (default: true).

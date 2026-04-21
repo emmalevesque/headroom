@@ -128,6 +128,137 @@ pub fn print_analysis_report(analyses: &[AudioAnalysis]) {
     }
 }
 
+/// Print a console report for soft clip candidates.
+pub fn print_soft_clip_report(
+    analyses: &[&AudioAnalysis],
+    target_lufs: f64,
+    threshold_db: f64,
+    clip_type: &str,
+) {
+    let blue_style = Style::new().blue();
+    let header_style = Style::new().bold().cyan();
+    let dim_style = Style::new().dim();
+
+    let filename_width = analyses
+        .iter()
+        .map(|a| a.filename.chars().count())
+        .max()
+        .unwrap_or(8)
+        .clamp(8, 40);
+
+    println!();
+    println!(
+        "{} {} soft clip {}  (target: {:.1} LUFS-I  threshold: {:.1} dBFS  type: {})",
+        blue_style.apply_to("●"),
+        header_style.apply_to(format!("{}", analyses.len())),
+        if analyses.len() == 1 { "candidate" } else { "candidates" },
+        target_lufs,
+        threshold_db,
+        clip_type,
+    );
+
+    println!(
+        "  {:<width$} {:>8} {:>12} {:>12}",
+        dim_style.apply_to("Filename"),
+        dim_style.apply_to("LUFS"),
+        dim_style.apply_to("Target"),
+        dim_style.apply_to("Boost"),
+        width = filename_width,
+    );
+
+    for a in analyses {
+        let gain_db = target_lufs - a.input_i;
+        let gain_str = format!("{:+.1} dB", gain_db);
+
+        let char_count = a.filename.chars().count();
+        let display_name: String = if char_count > filename_width {
+            let truncated: String = a.filename.chars().take(filename_width - 1).collect();
+            format!("{}…", truncated)
+        } else {
+            a.filename.clone()
+        };
+
+        println!(
+            "  {:<width$} {:>8.1} {:>10.1} LUFS {:>12}",
+            display_name,
+            a.input_i,
+            target_lufs,
+            blue_style.apply_to(gain_str),
+            width = filename_width,
+        );
+    }
+    println!();
+}
+
+/// Generate a CSV report for soft clip processing results.
+pub fn generate_soft_clip_csv(
+    analyses: &[&AudioAnalysis],
+    target_lufs: f64,
+    threshold_db: f64,
+    clip_type: &str,
+    output_dir: &Path,
+    explicit_path: Option<&Path>,
+) -> Result<std::path::PathBuf> {
+    let output_path = if let Some(p) = explicit_path {
+        if let Some(parent) = p.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent).context("Failed to create report directory")?;
+            }
+        }
+        p.to_path_buf()
+    } else {
+        let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+        output_dir.join(format!("headroom_softclip_{}.csv", timestamp))
+    };
+
+    let mut writer =
+        csv::Writer::from_path(&output_path).context("Failed to create CSV file")?;
+
+    writer
+        .write_record([
+            "Filename",
+            "Format",
+            "Bitrate (kbps)",
+            "LUFS",
+            "Target LUFS",
+            "Boost (dB)",
+            "Threshold (dBFS)",
+            "Clip Type",
+        ])
+        .context("Failed to write CSV header")?;
+
+    for analysis in analyses {
+        let format = if analysis.is_mp3 {
+            "MP3"
+        } else if analysis.is_aac {
+            "AAC"
+        } else {
+            "Lossless"
+        };
+        let bitrate = analysis
+            .bitrate_kbps
+            .map(|b| b.to_string())
+            .unwrap_or_else(|| "-".to_string());
+        let boost = target_lufs - analysis.input_i;
+
+        writer
+            .write_record([
+                &analysis.filename,
+                format,
+                &bitrate,
+                &format!("{:.1}", analysis.input_i),
+                &format!("{:.1}", target_lufs),
+                &format!("{:+.1}", boost),
+                &format!("{:.1}", threshold_db),
+                clip_type,
+            ])
+            .context("Failed to write CSV record")?;
+    }
+
+    writer.flush().context("Failed to flush CSV")?;
+    Ok(output_path)
+}
+
 fn print_file_table(files: &[&AudioAnalysis], filename_width: usize, accent_style: &Style) {
     let dim_style = Style::new().dim();
 
