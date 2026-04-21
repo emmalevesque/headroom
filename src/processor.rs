@@ -209,3 +209,26 @@ pub fn process_file(
         GainMethod::None => Ok(()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_soft_clip_filter() {
+        let f = build_soft_clip_filter(3.5, -1.0, "tanh");
+        assert!(f.starts_with("volume=3.50dB"), "unexpected filter: {}", f);
+        assert!(f.contains("asoftclip=type=tanh"), "unexpected filter: {}", f);
+        // threshold_linear for -1.0 dBFS ≈ 0.891251
+        assert!(f.contains("threshold=0.891"), "unexpected filter: {}", f);
+    }
+
+    #[test]
+    fn test_build_soft_clip_filter_zero_threshold() {
+        let f = build_soft_clip_filter(0.0, 0.0, "atan");
+        assert!(f.contains("volume=0.00dB"), "unexpected filter: {}", f);
+        assert!(f.contains("asoftclip=type=atan"), "unexpected filter: {}", f);
+        // threshold_linear for 0.0 dBFS = 1.000000
+        assert!(f.contains("threshold=1.000000"), "unexpected filter: {}", f);
+    }
+}

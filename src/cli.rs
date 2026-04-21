@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use console::{style, Style};
-use dialoguer::{theme::ColorfulTheme, Confirm};
+use dialoguer::{theme::ColorfulTheme, Confirm, Input};
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
@@ -409,6 +409,101 @@ fn analyze_files(files: &[PathBuf], tp_mode: TpTargetMode) -> Result<Vec<AudioAn
     println!("{} Analyzed {} files", style("✓").green(), analyses.len());
 
     Ok(analyses)
+}
+
+fn filter_soft_clip_candidates(analyses: &[AudioAnalysis], target_lufs: f64) -> Vec<&AudioAnalysis> {
+    analyses
+        .iter()
+        .filter(|a| target_lufs - a.input_i > MIN_EFFECTIVE_GAIN)
+        .collect()
+}
+
+fn soft_clip_files(
+    analyses: &[&AudioAnalysis],
+    target_lufs: f64,
+    threshold_db: f64,
+    clip_type: &str,
+    base_dir: &Path,
+    backup_dir: Option<&Path>,
+    tag_comment: bool,
+) -> Result<()> {
+    let pb = ProgressBar::new(analyses.len() as u64);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.blue} Soft clipping... [{bar:40.blue/cyan}] {pos}/{len}")
+            .unwrap()
+            .progress_chars("█▓░"),
+    );
+
+    for analysis in analyses {
+        if let Some(backup) = backup_dir {
+            if let Err(e) = processor::backup_file(&analysis.path, base_dir, backup) {
+                pb.println(format!(
+                    "{} {}: backup failed: {}",
+                    style("⚠").yellow(),
+                    analysis.filename,
+                    e
+                ));
+            }
+        }
+
+        let gain_db = target_lufs - analysis.input_i;
+
+        match processor::apply_soft_clip(
+            &analysis.path,
+            gain_db,
+            threshold_db,
+            clip_type,
+            analysis.bitrate_kbps,
+        ) {
+            Err(e) => pb.println(format!(
+                "{} {}: {}",
+                style("⚠").yellow(),
+                analysis.filename,
+                e
+            )),
+            Ok(()) if tag_comment => {
+                if let Err(e) = processor::write_gain_comment(&analysis.path, gain_db) {
+                    pb.println(format!(
+                        "{} {}: comment tag: {}",
+                        style("⚠").yellow(),
+                        analysis.filename,
+                        e
+                    ));
+                }
+            }
+            Ok(()) => {}
+        }
+        pb.inc(1);
+    }
+
+    pb.finish_and_clear();
+    Ok(())
+}
+
+fn tag_files_only(analyses: &[&AudioAnalysis]) -> Result<()> {
+    let pb = ProgressBar::new(analyses.len() as u64);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} Tagging...  [{bar:40.cyan/blue}] {pos}/{len}")
+            .unwrap()
+            .progress_chars("█▓░"),
+    );
+
+    for analysis in analyses {
+        if let Err(e) = processor::write_gain_comment(&analysis.path, analysis.effective_gain) {
+            pb.println(format!(
+                "{} {}: comment tag: {}",
+                style("⚠").yellow(),
+                analysis.filename,
+                e
+            ));
+        }
+        pb.inc(1);
+    }
+
+    pb.finish_and_clear();
+    Ok(())
 }
 
 fn process_files(
