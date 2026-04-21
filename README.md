@@ -150,9 +150,10 @@ baken headroom
 The tool will guide you through:
 1. Scanning and analyzing all audio files
 2. Reviewing the categorized report
-3. Confirming lossless processing
-4. Optionally enabling MP3/AAC re-encoding
-5. Creating backups (recommended)
+3. Choosing between gain mode, soft clip mode, or tag-only
+4. Confirming lossless processing (gain mode) or soft clip parameters
+5. Optionally enabling MP3/AAC re-encoding (gain mode)
+6. Creating backups (recommended)
 
 #### Scriptable Mode
 
@@ -181,12 +182,37 @@ baken headroom --lossless --tp-target -1.0 ./album/
 baken headroom --lossless --tp-split-bitrate ./album/
 ```
 
-**Non-interactive defaults** (when any flag or path is provided):
-- `--lossless` is **on** unless `--no-lossless`
-- `--reencode` is **off** unless `--reencode` is explicitly passed
-- `--backup` is **off** unless provided; bare `--backup` uses `<target>/backup`
-- CSV report is written unless `--no-report`; `--report PATH` sets a custom location
-- `--analyze-only` runs analysis + report only, skips processing
+### ID3v2 Comment Tagging
+
+Write the applied gain to the `COMM` frame (MP3 and AIFF only):
+
+```bash
+# Prepend gain to comment after processing
+headroom --lossless --tag-comment ~/Music/DJ-Tracks
+
+# Write suggested gain to comment WITHOUT applying gain to audio
+headroom --tag-comment-only ~/Music/DJ-Tracks
+```
+
+The gain is prepended as `+2.7 dB | <existing comment>`. The separator can be customized in the config file.
+
+### Flags Reference
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--lossless` / `--no-lossless` | on | Apply lossless gain adjustment |
+| `--reencode` / `--no-reencode` | off | Re-encode MP3/AAC for precise gain |
+| `--soft-clip` | off | Boost to target LUFS-I with soft clipping (replaces gain mode) |
+| `--soft-clip-target LUFS` | -14.0 | Target integrated loudness for soft clip mode |
+| `--soft-clip-threshold DBFS` | -1.0 | dBFS point at which clipping begins |
+| `--soft-clip-type TYPE` | tanh | Clip curve: tanh, atan, cubic, exp, alg, quintic, sin, erf |
+| `--analyze-only` | off | Analyze and report only, do not modify files |
+| `--tag-comment` | off | Prepend effective gain to ID3v2 COMM field |
+| `--tag-comment-only` | off | Write suggested gain to COMM without applying audio gain |
+| `--no-tag-comment` | — | Override config default to skip comment tagging |
+| `--backup [DIR]` | off | Create backup before processing (default dir: `<target>/backup`) |
+| `--no-backup` | — | Override config default to skip backup |
+| `--report [PATH]` / `--no-report` | on | Generate CSV report (default: `<target>/headroom_report_*.csv`) |
 
 Run `baken headroom --help` for the full flag reference.
 
@@ -270,13 +296,11 @@ The native-lossless threshold scales with the chosen ceiling: it is always `targ
 ./
 ├── track01.flac             ← Modified
 ├── track04.mp3              ← Modified
-├── track08.m4a              ← Modified
 ├── subfolder/
 │   └── track06.mp3          ← Modified
 └── backup/                  ← Created by baken
     ├── track01.flac         ← Original
     ├── track04.mp3          ← Original
-    ├── track08.m4a          ← Original
     └── subfolder/
         └── track06.mp3      ← Original
 ```
@@ -284,10 +308,13 @@ The native-lossless threshold scales with the chosen ceiling: it is always `targ
 ### Notes & Technical Details
 
 - **Files are overwritten in place** after backup — Rekordbox metadata remains linked
-- Only files with **positive effective gain** are shown and processed
+- **Gain mode**: Only files with positive effective gain are shown and processed
+- **Soft clip mode**: Only files below the target LUFS-I are processed
 - MP3/AAC native lossless requires at least **1.5dB headroom** to be processed
 - MP3/AAC re-encoding is **opt-in** and requires explicit confirmation
+- ID3v2 comment tagging applies to **MP3 and AIFF only**; other formats are skipped silently
 - macOS resource fork files (`._*`) are automatically ignored
+- ffmpeg ≥ 4.4 is required for the `asoftclip` filter (soft clip mode)
 
 #### Why 1.5dB Steps?
 
