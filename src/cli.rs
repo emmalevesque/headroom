@@ -415,6 +415,7 @@ fn process_files(
     analyses: &[&AudioAnalysis],
     base_dir: &std::path::Path,
     backup_dir: Option<&std::path::Path>,
+    tag_comment: bool,
 ) -> Result<()> {
     let pb = make_progress_bar(analyses.len(), "Processing...");
 
@@ -426,7 +427,20 @@ fn process_files(
                 style("⚠").yellow(),
                 analysis.filename,
                 e
-            ));
+            )),
+            Ok(()) if tag_comment => {
+                if let Err(e) =
+                    processor::write_gain_comment(&analysis.path, analysis.effective_gain)
+                {
+                    pb.println(format!(
+                        "{} {}: comment tag: {}",
+                        style("⚠").yellow(),
+                        analysis.filename,
+                        e
+                    ));
+                }
+            }
+            Ok(()) => {}
         }
         pb.inc(1);
     });

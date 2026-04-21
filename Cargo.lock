@@ -96,6 +96,7 @@ dependencies = [
  "csv",
  "dialoguer",
  "glob",
+ "id3",
  "indicatif",
  "mp3rgain",
  "quick-xml",
