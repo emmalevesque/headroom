@@ -13,13 +13,18 @@ This tool is designed for DJs and producers who want to maximize loudness while 
 - **Single binary**: mp3rgain is built-in as a library — only ffmpeg required as external dependency
 - **Smart True Peak ceiling**: Based on AES TD1008, uses -0.5 dBTP for high-quality files, -1.0 dBTP for low-bitrate
 - **Multiple processing methods**: ffmpeg for lossless formats, built-in mp3rgain for lossless MP3/AAC gain, ffmpeg re-encode for precise gain
+- **Soft clip mode**: Alternative to pure gain — boost to a target LUFS-I and shape peaks with ffmpeg's `asoftclip` filter (ideal for DJ/club mastering targets like -7.5 LUFS)
 - **Non-destructive workflow**: Original files are backed up before processing
 - **Metadata preservation**: Audio tags (ID3v2, Vorbis comment, BWF) are preserved during processing, and files are overwritten in place so Rekordbox cue points and other external metadata remain linked
-- **No limiter**: Pure gain adjustment only — dynamics are preserved
+- **ID3v2 comment tagging**: Optionally prepend the applied gain to the COMM field (MP3/AIFF), useful for tracking processing history in DJ software
+- **No limiter (gain mode)**: Pure gain adjustment only — dynamics are preserved
 - **Interactive CLI**: Guided step-by-step process with two-stage confirmation
 - **Scriptable CLI**: Non-interactive mode for pipelines and CI (paths, globs, and flags)
+- **Config file**: Set your preferred defaults in `~/.headroom.toml`
 
 ## Processing Methods
+
+### Gain Mode (default)
 
 headroom selects the optimal method for each file based on format and headroom:
 
@@ -29,7 +34,7 @@ headroom selects the optimal method for each file based on format and headroom:
 | MP3, AAC/M4A | mp3rgain (built-in) | 1.5dB steps | **None** (global_gain modification) |
 | MP3, AAC/M4A | ffmpeg re-encode | Arbitrary | Inaudible at ≥256kbps |
 
-### Three-Tier Approach for Lossy Formats (MP3/AAC)
+#### Three-Tier Approach for Lossy Formats (MP3/AAC)
 
 Each MP3 and AAC/M4A file is categorized into one of three tiers:
 
@@ -40,14 +45,29 @@ Each MP3 and AAC/M4A file is categorized into one of three tiers:
 
 2. **Re-encode** — headroom exists but <1.5 dB to ceiling
    - Uses ffmpeg for arbitrary precision gain
-   - MP3: `libmp3lame` with `-q:a 0` / AAC: `libfdk_aac` (falls back to built-in `aac`)
+   - MP3: `libmp3lame` / AAC: `libfdk_aac` (falls back to built-in `aac`)
    - Preserves original bitrate; requires explicit user confirmation
 
 3. **Skip** — no headroom available
 
-## True Peak Ceiling
+### Soft Clip Mode (`--soft-clip`)
 
-Based on [AES TD1008](https://www.aes.org/technical/documentDownloads.cfm?docID=731) recommendations. The ceiling depends on bitrate, not format:
+An alternative to the gain-only path. Instead of stopping at the True Peak ceiling, soft clip mode:
+
+1. Boosts the signal to a target **LUFS-I** loudness (e.g. -7.5 LUFS for DJ/club use, -14.0 LUFS for streaming)
+2. Shapes any peaks above a dBFS threshold using ffmpeg's `asoftclip` filter — a smooth saturation curve rather than a hard limiter
+
+All formats are re-encoded since the audio data changes. The filter chain applied is:
+
+```
+volume={boost}dB,asoftclip=type={type}:threshold={linear}
+```
+
+Available clip curve types: `tanh` (default), `atan`, `cubic`, `exp`, `alg`, `quintic`, `sin`, `erf`
+
+## True Peak Ceiling (Gain Mode)
+
+Based on [AES TD1008](https://www.aes.org/technical/documentDownloads.cfm?docID=731) recommendations:
 
 | Bitrate | Ceiling | Native lossless requires |
 |---------|---------|------------------------|
@@ -57,78 +77,20 @@ Based on [AES TD1008](https://www.aes.org/technical/documentDownloads.cfm?docID=
 
 ## How It Works
 
-1. Scans the current directory for audio files (FLAC, AIFF, WAV, MP3, AAC/M4A)
-2. Measures LUFS (Integrated Loudness) and True Peak using ffmpeg
-3. Categorizes files by processing method:
-   - **Green**: Lossless files (ffmpeg)
-   - **Yellow**: MP3/AAC files with enough headroom for native lossless gain
-   - **Magenta**: MP3/AAC files requiring re-encode
-4. Displays categorized report
-5. Two-stage confirmation:
-   - First: "Apply lossless gain adjustment?" (lossless + native MP3/AAC)
-   - Second: "Also process files with re-encoding?" (MP3/AAC requiring re-encode)
-6. Creates backups and processes files
+### Gain Mode
+1. Scans the target for audio files (FLAC, AIFF, WAV, MP3, AAC/M4A)
+2. Measures LUFS-I and True Peak using ffmpeg's `loudnorm` filter
+3. Categorizes files by processing method and displays the report
+4. Two-stage confirmation (interactive) or processes immediately (scriptable):
+   - First: apply lossless gain (lossless files + native MP3/AAC)
+   - Second: optionally re-encode MP3/AAC needing precise gain
+5. Creates backups and processes files
 
-### Example
-
-```
-$ cd ~/Music/DJ-Tracks
-$ headroom
-
-╭─────────────────────────────────────╮
-│          headroom v1.7.3            │
-│   Audio Loudness Analyzer & Gain    │
-╰─────────────────────────────────────╯
-
-▸ Target directory: /Users/xxx/Music/DJ-Tracks
-
-✓ Found 28 audio files
-✓ Analyzed 28 files
-
-● 3 lossless files (ffmpeg, precise gain)
-  Filename        LUFS    True Peak    Target        Gain
-  track01.flac   -13.3    -3.2 dBTP   -0.5 dBTP   +2.7 dB
-  track02.aif    -14.1    -4.5 dBTP   -0.5 dBTP   +4.0 dB
-  track03.wav    -12.5    -2.8 dBTP   -0.5 dBTP   +2.3 dB
-
-● 2 MP3 files (native lossless, 1.5dB steps, target: -2.0 dBTP)
-  Filename        LUFS    True Peak    Target        Gain
-  track04.mp3    -14.0    -5.5 dBTP   -2.0 dBTP   +3.0 dB
-  track05.mp3    -13.5    -6.0 dBTP   -2.0 dBTP   +3.0 dB
-
-● 2 AAC/M4A files (native lossless, 1.5dB steps)
-  Filename        LUFS    True Peak    Target        Gain
-  track08.m4a    -13.0    -4.0 dBTP   -1.0 dBTP   +3.0 dB
-  track09.m4a    -12.5    -4.5 dBTP   -1.0 dBTP   +3.0 dB
-
-● 2 MP3 files (re-encode required for precise gain)
-  Filename        LUFS    True Peak    Target        Gain
-  track06.mp3    -12.0    -1.5 dBTP   -0.5 dBTP   +1.0 dB
-  track07.mp3    -11.5    -1.2 dBTP   -0.5 dBTP   +0.7 dB
-
-● 1 AAC/M4A files (re-encode required)
-  Filename        LUFS    True Peak    Target        Gain
-  track10.m4a    -12.5    -1.8 dBTP   -0.5 dBTP   +1.3 dB
-
-✓ Report saved: ./headroom_report_20250109_123456.csv
-
-? Apply lossless gain adjustment to 3 lossless + 2 MP3 (lossless gain) + 2 AAC/M4A (lossless gain) files? [y/N] y
-
-ℹ 2 MP3 + 1 AAC/M4A files have headroom but require re-encoding for precise gain.
-  • Re-encoding causes minor quality loss (inaudible at 256kbps+)
-  • Original bitrate will be preserved
-? Also process these files with re-encoding? [y/N] y
-
-? Create backup before processing? [Y/n] y
-✓ Backup directory: ./backup
-
-✓ Done! 10 files processed.
-  • 3 lossless files (ffmpeg)
-  • 2 MP3 files (native, lossless)
-  • 2 AAC/M4A files (native, lossless)
-  • 2 MP3 files (re-encoded)
-  • 1 AAC/M4A files (re-encoded)
-```
+### Soft Clip Mode
+1. Scans and analyzes all audio files
+2. Filters files that are below the target LUFS-I
+3. Displays a soft clip report showing per-file boost required
+4. Boosts + soft clips each file via ffmpeg
 
 ## Installation
 
@@ -165,51 +127,114 @@ headroom
 The tool will guide you through:
 1. Scanning and analyzing all audio files
 2. Reviewing the categorized report
-3. Confirming lossless processing
-4. Optionally enabling MP3/AAC re-encoding
-5. Creating backups (recommended)
+3. Choosing between gain mode, soft clip mode, or tag-only
+4. Confirming lossless processing (gain mode) or soft clip parameters
+5. Optionally enabling MP3/AAC re-encoding (gain mode)
+6. Creating backups (recommended)
 
 ### Scriptable Mode
 
 Pass paths, globs, or flags to run non-interactively (useful for pipelines and scripts):
 
 ```bash
-# Analyze a directory without modifying anything
+# Analyze files without modifying them
 headroom --analyze-only ~/Music/DJ-Tracks
 
-# Apply only lossless gain, with backup, save report to a specific path
-headroom --lossless --backup ./bak --report results.csv ./album/
+# Apply lossless gain to all files in the current directory
+headroom --lossless
 
-# Enable re-encoding as well
-headroom --lossless --reencode --backup ./bak ./album/
+# Soft clip a folder to -7.5 LUFS (e.g. club/DJ mastering target)
+headroom --soft-clip --soft-clip-target -7.5 ~/Music/DJ-Tracks
 
-# Operate on specific files
-headroom --lossless track1.mp3 track2.flac
+# Soft clip to -7.5 LUFS with a tighter threshold and atan curve
+headroom --soft-clip --soft-clip-target -7.5 --soft-clip-threshold -2.0 --soft-clip-type atan ~/Music/DJ-Tracks
 
-# Glob patterns
-headroom --lossless --no-report "./music/**/*.mp3"
+# Soft clip to -7.5 LUFS and write the boost to the ID3v2 comment tag
+headroom --soft-clip --soft-clip-target -7.5 --tag-comment ~/Music/DJ-Tracks
+
+# Apply lossless gain + re-encode lossy files with a backup
+headroom --lossless --reencode --backup ~/Music/DJ-Tracks
+
+# Process specific files or glob patterns
+headroom --lossless --no-report track1.mp3 track2.flac "./albums/**/*.mp3"
 ```
 
-**Non-interactive defaults** (when any flag or path is provided):
-- `--lossless` is **on** unless `--no-lossless`
-- `--reencode` is **off** unless `--reencode` is explicitly passed
-- `--backup` is **off** unless provided; bare `--backup` uses `<target>/backup`
-- CSV report is written unless `--no-report`; `--report PATH` sets a custom location
-- `--analyze-only` runs analysis + report only, skips processing
+### ID3v2 Comment Tagging
+
+Write the applied gain to the `COMM` frame (MP3 and AIFF only):
+
+```bash
+# Prepend gain to comment after processing
+headroom --lossless --tag-comment ~/Music/DJ-Tracks
+
+# Write suggested gain to comment WITHOUT applying gain to audio
+headroom --tag-comment-only ~/Music/DJ-Tracks
+```
+
+The gain is prepended as `+2.7 dB | <existing comment>`. The separator can be customized in the config file.
+
+### Flags Reference
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--lossless` / `--no-lossless` | on | Apply lossless gain adjustment |
+| `--reencode` / `--no-reencode` | off | Re-encode MP3/AAC for precise gain |
+| `--soft-clip` | off | Boost to target LUFS-I with soft clipping (replaces gain mode) |
+| `--soft-clip-target LUFS` | -14.0 | Target integrated loudness for soft clip mode |
+| `--soft-clip-threshold DBFS` | -1.0 | dBFS point at which clipping begins |
+| `--soft-clip-type TYPE` | tanh | Clip curve: tanh, atan, cubic, exp, alg, quintic, sin, erf |
+| `--analyze-only` | off | Analyze and report only, do not modify files |
+| `--tag-comment` | off | Prepend effective gain to ID3v2 COMM field |
+| `--tag-comment-only` | off | Write suggested gain to COMM without applying audio gain |
+| `--no-tag-comment` | — | Override config default to skip comment tagging |
+| `--backup [DIR]` | off | Create backup before processing (default dir: `<target>/backup`) |
+| `--no-backup` | — | Override config default to skip backup |
+| `--report [PATH]` / `--no-report` | on | Generate CSV report (default: `<target>/headroom_report_*.csv`) |
 
 Run `headroom --help` for the full flag reference.
 
+## Configuration File
+
+Create `~/.headroom.toml` to set persistent defaults:
+
+```toml
+[comment]
+# String inserted between the gain value and any existing comment text
+separator = " | "
+
+[defaults]
+# Apply lossless gain by default in scriptable mode
+lossless    = true
+# Apply re-encoding by default in scriptable mode
+reencode    = false
+# Prepend gain to ID3v2 comment by default
+tag_comment = false
+# Create a backup by default before processing
+backup      = false
+# Generate a CSV report by default
+report      = true
+```
+
+**Precedence:** explicit CLI flag > config default > built-in default
+
+Use `--no-tag-comment` or `--no-backup` to override a `true` config default for a single run.
+
 ## Output
 
-### CSV Report
+### Gain Mode CSV Report
 
 | Filename | Format | Bitrate (kbps) | LUFS | True Peak (dBTP) | Target (dBTP) | Headroom (dB) | Method | Effective Gain (dB) |
 |----------|--------|----------------|------|------------------|---------------|---------------|--------|---------------------|
 | track01.flac | Lossless | - | -13.3 | -3.2 | -0.5 | +2.7 | ffmpeg | +2.7 |
 | track04.mp3 | MP3 | 320 | -14.0 | -5.5 | -2.0 | +3.5 | mp3rgain | +3.0 |
 | track06.mp3 | MP3 | 320 | -12.0 | -1.5 | -0.5 | +1.0 | re-encode | +1.0 |
-| track08.m4a | AAC | 256 | -13.0 | -4.0 | -1.0 | +3.0 | native | +3.0 |
-| track10.m4a | AAC | 256 | -12.5 | -1.8 | -0.5 | +1.3 | re-encode | +1.3 |
+
+### Soft Clip CSV Report
+
+| Filename | Format | Bitrate (kbps) | LUFS | Target LUFS | Boost (dB) | Threshold (dBFS) | Clip Type |
+|----------|--------|----------------|------|-------------|------------|-----------------|-----------|
+| track01.flac | Lossless | - | -13.3 | -7.5 | +5.8 | -1.0 | tanh |
+| track04.mp3 | MP3 | 320 | -14.0 | -7.5 | +6.5 | -1.0 | tanh |
 
 ### Backup Structure
 
@@ -217,13 +242,11 @@ Run `headroom --help` for the full flag reference.
 ./
 ├── track01.flac             ← Modified
 ├── track04.mp3              ← Modified
-├── track08.m4a              ← Modified
 ├── subfolder/
 │   └── track06.mp3          ← Modified
 └── backup/                  ← Created by headroom
     ├── track01.flac         ← Original
     ├── track04.mp3          ← Original
-    ├── track08.m4a          ← Original
     └── subfolder/
         └── track06.mp3      ← Original
 ```
@@ -231,10 +254,13 @@ Run `headroom --help` for the full flag reference.
 ## Important Notes
 
 - **Files are overwritten in place** after backup — Rekordbox metadata remains linked
-- Only files with **positive effective gain** are shown and processed
+- **Gain mode**: Only files with positive effective gain are shown and processed
+- **Soft clip mode**: Only files below the target LUFS-I are processed
 - MP3/AAC native lossless requires at least **1.5dB headroom** to be processed
 - MP3/AAC re-encoding is **opt-in** and requires explicit confirmation
+- ID3v2 comment tagging applies to **MP3 and AIFF only**; other formats are skipped silently
 - macOS resource fork files (`._*`) are automatically ignored
+- ffmpeg ≥ 4.4 is required for the `asoftclip` filter (soft clip mode)
 
 ## Technical Details
 
@@ -255,6 +281,10 @@ Example: 320kbps file at -3.5 dBTP gets 2 steps (+3.0dB) → -0.5 dBTP (optimal)
 ### Re-encode Quality
 
 At ≥256kbps, re-encoding introduces quantization noise below -90dB — far below audible threshold. Only gain is applied (no EQ, compression, or dynamics processing), and original bitrate is preserved.
+
+### Soft Clip Algorithm
+
+The ffmpeg `asoftclip` filter applies smooth saturation instead of hard clipping. The `threshold` parameter (converted from dBFS to linear: `10^(dBFS/20)`) sets where shaping begins. The `type` selects the curve shape — `tanh` is the default and produces a smooth, musical-sounding saturation.
 
 ## License
 
