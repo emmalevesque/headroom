@@ -122,9 +122,15 @@ impl HeadroomArgs {
         }
     }
 
-    /// Whether lossless processing is enabled in non-interactive mode (default: true).
-    pub fn lossless_enabled(&self) -> bool {
-        !self.no_lossless
+    /// Whether lossless processing is enabled. Explicit flags beat the config default.
+    pub fn lossless_enabled(&self, default: bool) -> bool {
+        if self.lossless {
+            true
+        } else if self.no_lossless {
+            false
+        } else {
+            default
+        }
     }
 
     /// Whether re-encode processing is enabled in non-interactive mode (default: false).
@@ -133,9 +139,15 @@ impl HeadroomArgs {
         self.reencode
     }
 
-    /// Whether CSV report should be generated in non-interactive mode (default: true).
-    pub fn report_enabled(&self) -> bool {
-        !self.no_report
+    /// Whether CSV report should be generated. Explicit flags beat the config default.
+    pub fn report_enabled(&self, default: bool) -> bool {
+        if self.no_report {
+            false
+        } else if self.report.is_some() {
+            true
+        } else {
+            default
+        }
     }
 }
 

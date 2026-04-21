@@ -2,6 +2,7 @@ mod analyzer;
 mod args;
 mod cdjsafe;
 mod cli;
+mod config;
 mod processor;
 mod rbsort;
 mod report;

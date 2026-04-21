@@ -16,6 +16,7 @@ use crate::updater;
 
 pub fn run() -> Result<()> {
     let cli = Cli::parse();
+    let config = Config::load();
 
     match cli.command {
         Command::Rbsort(args) => rbsort::run(&args),
@@ -175,7 +176,7 @@ fn run_interactive(tp_mode: TpTargetMode) -> Result<()> {
 
     let create_backup = Confirm::with_theme(&ColorfulTheme::default())
         .with_prompt("Create backup before processing?")
-        .default(true)
+        .default(config.defaults.backup)
         .interact()?;
 
     let backup_dir = if create_backup {
@@ -411,6 +412,22 @@ fn analyze_files(files: &[PathBuf], tp_mode: TpTargetMode) -> Result<Vec<AudioAn
     Ok(analyses)
 }
 
+fn resolve_backup_dir(cli: &Cli, config: &Config, base_dir: &Path) -> Result<Option<PathBuf>> {
+    let want_backup = (cli.backup.is_some() || config.defaults.backup) && !cli.no_backup;
+    if !want_backup {
+        return Ok(None);
+    }
+    let dir = match &cli.backup {
+        Some(p) if !p.as_os_str().is_empty() => {
+            std::fs::create_dir_all(p).context("Failed to create backup directory")?;
+            p.clone()
+        }
+        _ => processor::create_backup_dir(base_dir)?,
+    };
+    println!("{} Backup directory: {}", style("✓").green(), dir.display());
+    Ok(Some(dir))
+}
+
 fn filter_soft_clip_candidates(analyses: &[AudioAnalysis], target_lufs: f64) -> Vec<&AudioAnalysis> {
     analyses
         .iter()
@@ -426,6 +443,7 @@ fn soft_clip_files(
     base_dir: &Path,
     backup_dir: Option<&Path>,
     tag_comment: bool,
+    separator: &str,
 ) -> Result<()> {
     let pb = ProgressBar::new(analyses.len() as u64);
     pb.set_style(
@@ -463,7 +481,7 @@ fn soft_clip_files(
                 e
             )),
             Ok(()) if tag_comment => {
-                if let Err(e) = processor::write_gain_comment(&analysis.path, gain_db) {
+                if let Err(e) = processor::write_gain_comment(&analysis.path, gain_db, separator) {
                     pb.println(format!(
                         "{} {}: comment tag: {}",
                         style("⚠").yellow(),
@@ -481,7 +499,7 @@ fn soft_clip_files(
     Ok(())
 }
 
-fn tag_files_only(analyses: &[&AudioAnalysis]) -> Result<()> {
+fn tag_files_only(analyses: &[&AudioAnalysis], separator: &str) -> Result<()> {
     let pb = ProgressBar::new(analyses.len() as u64);
     pb.set_style(
         ProgressStyle::default_bar()
@@ -491,7 +509,9 @@ fn tag_files_only(analyses: &[&AudioAnalysis]) -> Result<()> {
     );
 
     for analysis in analyses {
-        if let Err(e) = processor::write_gain_comment(&analysis.path, analysis.effective_gain) {
+        if let Err(e) =
+            processor::write_gain_comment(&analysis.path, analysis.effective_gain, separator)
+        {
             pb.println(format!(
                 "{} {}: comment tag: {}",
                 style("⚠").yellow(),
@@ -511,6 +531,7 @@ fn process_files(
     base_dir: &std::path::Path,
     backup_dir: Option<&std::path::Path>,
     tag_comment: bool,
+    separator: &str,
 ) -> Result<()> {
     let pb = make_progress_bar(analyses.len(), "Processing...");
 
@@ -524,9 +545,11 @@ fn process_files(
                 e
             )),
             Ok(()) if tag_comment => {
-                if let Err(e) =
-                    processor::write_gain_comment(&analysis.path, analysis.effective_gain)
-                {
+                if let Err(e) = processor::write_gain_comment(
+                    &analysis.path,
+                    analysis.effective_gain,
+                    separator,
+                ) {
                     pb.println(format!(
                         "{} {}: comment tag: {}",
                         style("⚠").yellow(),
