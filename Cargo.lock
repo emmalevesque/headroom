@@ -373,6 +373,7 @@ dependencies = [
  "csv",
  "dialoguer",
  "glob",
+ "id3",
  "indicatif",
  "mp3rgain",
  "rayon",

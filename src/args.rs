@@ -42,6 +42,10 @@ pub struct Cli {
     /// Analyze files only, do not modify anything
     #[arg(long)]
     pub analyze_only: bool,
+
+    /// Prepend effective gain to the ID3v2 comment (COMM) field of each processed file
+    #[arg(long)]
+    pub tag_comment: bool,
 }
 
 impl Cli {
@@ -56,6 +60,7 @@ impl Cli {
             || self.report.is_some()
             || self.no_report
             || self.analyze_only
+            || self.tag_comment
     }
 
     /// Whether lossless processing is enabled in non-interactive mode (default: true).

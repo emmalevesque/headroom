@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Context, Result};
+use id3::{TagLike, Version};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -197,6 +198,63 @@ pub fn apply_gain_aac_reencode(
         &["libfdk_aac", "aac"],
         "AAC",
     )
+}
+
+/// Prepend the effective gain to the ID3v2 COMM frame of the file.
+///
+/// Only applies to formats that natively embed ID3v2 tags (MP3, AIFF).
+/// Other formats (FLAC, WAV) are silently skipped.
+/// Any existing comments with non-empty descriptions are preserved.
+pub fn write_gain_comment(path: &Path, gain_db: f64) -> Result<()> {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    if !matches!(ext.as_str(), "mp3" | "aif" | "aiff") {
+        return Ok(());
+    }
+
+    let mut tag = id3::Tag::read_from_path(path).unwrap_or_default();
+
+    // Build the gain prefix, always showing sign (e.g. "+2.7 dB" or "-1.5 dB")
+    let gain_prefix = format!("{:+.1} dB", gain_db);
+
+    // Read the current default comment (empty description) if present
+    let existing_text = tag
+        .comments()
+        .find(|c| c.description.is_empty())
+        .map(|c| c.text.clone())
+        .unwrap_or_default();
+
+    let new_text = if existing_text.is_empty() {
+        gain_prefix
+    } else {
+        format!("{} | {}", gain_prefix, existing_text)
+    };
+
+    // Preserve comments with non-empty descriptions; replace the default one
+    let named_comments: Vec<_> = tag
+        .comments()
+        .filter(|c| !c.description.is_empty())
+        .cloned()
+        .collect();
+
+    tag.remove("COMM");
+    for c in named_comments {
+        tag.add_frame(c);
+    }
+    tag.add_frame(id3::frame::Comment {
+        lang: "eng".to_string(),
+        description: String::new(),
+        text: new_text,
+    });
+
+    tag.write_to_path(path, Version::Id3v24)
+        .context("Failed to write ID3v2 comment tag")?;
+
+    Ok(())
 }
 
 pub fn process_file(

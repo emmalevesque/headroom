@@ -106,6 +106,11 @@ fn run_interactive() -> Result<()> {
         None
     };
 
+    let tag_comment = Confirm::with_theme(&ColorfulTheme::default())
+        .with_prompt("Prepend effective gain to ID3v2 comment field?")
+        .default(false)
+        .interact()?;
+
     let files_to_process: Vec<_> = all_analyses
         .iter()
         .filter(|a| a.has_headroom() && (!a.requires_reencode() || allow_reencode))
@@ -116,7 +121,7 @@ fn run_interactive() -> Result<()> {
         return Ok(());
     }
 
-    process_files(&files_to_process, &target_dir, backup_dir.as_deref())?;
+    process_files(&files_to_process, &target_dir, backup_dir.as_deref(), tag_comment)?;
 
     print_final_summary(&files_to_process);
 
@@ -222,7 +227,7 @@ fn run_scriptable(cli: &Cli) -> Result<()> {
         None
     };
 
-    process_files(&files_to_process, &base_dir, backup_dir.as_deref())?;
+    process_files(&files_to_process, &base_dir, backup_dir.as_deref(), cli.tag_comment)?;
 
     print_final_summary(&files_to_process);
 
@@ -404,6 +409,7 @@ fn process_files(
     analyses: &[&AudioAnalysis],
     base_dir: &std::path::Path,
     backup_dir: Option<&std::path::Path>,
+    tag_comment: bool,
 ) -> Result<()> {
     let pb = ProgressBar::new(analyses.len() as u64);
     pb.set_style(
@@ -414,13 +420,26 @@ fn process_files(
     );
 
     for analysis in analyses {
-        if let Err(e) = processor::process_file(&analysis.path, analysis, base_dir, backup_dir) {
-            pb.println(format!(
+        match processor::process_file(&analysis.path, analysis, base_dir, backup_dir) {
+            Err(e) => pb.println(format!(
                 "{} {}: {}",
                 style("⚠").yellow(),
                 analysis.filename,
                 e
-            ));
+            )),
+            Ok(()) if tag_comment => {
+                if let Err(e) =
+                    processor::write_gain_comment(&analysis.path, analysis.effective_gain)
+                {
+                    pb.println(format!(
+                        "{} {}: comment tag: {}",
+                        style("⚠").yellow(),
+                        analysis.filename,
+                        e
+                    ));
+                }
+            }
+            Ok(()) => {}
         }
         pb.inc(1);
     }
