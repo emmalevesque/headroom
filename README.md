@@ -1,32 +1,21 @@
 # Bake'n Deck (`baken`)
 
-**Built for the Rekordbox → CDJ workflow.**
+[![crates.io](https://img.shields.io/crates/v/baken)](https://crates.io/crates/baken)
+[![Downloads](https://img.shields.io/github/downloads/M-Igashi/baken/total)](https://github.com/M-Igashi/baken/releases)
+[![License: MIT](https://img.shields.io/github/license/M-Igashi/baken)](LICENSE)
+![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 
-Rekordbox's Auto Gain doesn't survive USB export, and Rekordbox has never offered compound Key+BPM sort (Serato had it for years — but never exported to CDJs). Bake'n Deck bakes both into the files themselves, so what you prep is what plays on the deck.
+**What you prep in Rekordbox is what plays on the deck.**
 
-> [!NOTE]
-> **headroom is now Bake'n Deck 3.0.** As announced in [#60](https://github.com/M-Igashi/baken/issues/60), the binary, crate, Homebrew formula, and repository were renamed from `headroom` to `baken` at v3.0.0, and the site moved to `baken.ravers.workers.dev`. This was a **hard cut** — the old `headroom` install channels (brew/winget/cargo/AUR) no longer receive updates; reinstall via the `baken` packages below. The loudness analyzer now lives under the `baken headroom` subcommand.
+Rekordbox does three things in software that never survive the trip to a CDJ. Bake'n Deck bakes each one into the files themselves:
 
-## What is this?
+| Subcommand | The gap it fills | What it does |
+|---|---|---|
+| [`baken headroom`](#loudness-normalizer-baken-headroom) | Auto Gain is ignored on USB export | Measures LUFS / True Peak and bakes safe gain into the audio file — **no limiter**, dynamics preserved, cues stay linked |
+| [`baken rbsort`](#rekordbox-playlist-sorter-baken-rbsort) | No compound Key+BPM sort in Rekordbox | Sorts playlists by **Camelot Key (1A→12B) then BPM** and writes the order into `collection.xml` — CDJs play it in that exact order |
+| [`baken cdjsafe`](#cdj-safe-transcoder-baken-cdjsafe) | Pre-NXS2 CDJs only play MP3 reliably | Transcodes a whole playlist to **320 kbps CBR MP3** with **cues and beatgrid carried over** — the emergency-backup USB |
 
-**Bake'n Deck** is a CLI toolkit with three subcommands:
-
-- **`baken headroom`** simulates the behavior of Rekordbox's Auto Gain feature, but with a key difference: it identifies files with available headroom (True Peak below the target ceiling) and applies gain adjustment **without using a limiter**. Designed for DJs and producers who want to maximize loudness while preserving dynamics, ensuring tracks hit the optimal True Peak ceiling without clipping.
-- **`baken rbsort`** sorts a Rekordbox playlist by **Camelot Key (1A→12B) then BPM ascending**, and appends the result as a new playlist to your `collection.xml`. Useful for harmonic mixing prep when the Rekordbox UI does not expose multi-column sort. See [Rekordbox Playlist Sorter](#rekordbox-playlist-sorter-baken-rbsort).
-- **`baken cdjsafe`** *(new in v3.0)* transcodes every track in a Rekordbox playlist to **CDJ-safe MP3s (320 kbps CBR @ 44.1 kHz)** and emits an updated XML in which the new tracks inherit the originals' **cue points and beatgrid** — for gigs on pre-NXS2 CDJs that won't play FLAC/ALAC/AIFF/AAC. See [CDJ-safe Transcoder](#cdj-safe-transcoder-baken-cdjsafe).
-
-## Key Features
-
-- **Single binary**: mp3rgain is built-in as a library — only ffmpeg required as external dependency
-- **Uniform True Peak ceiling**: -0.5 dBTP for every file by default — the most aggressive, AES TD1008–blessed delivery target — fully overridable via `--tp-target`
-- **Multiple processing methods**: ffmpeg for lossless formats, built-in mp3rgain for lossless MP3/AAC gain, ffmpeg re-encode for precise gain
-- **Non-destructive workflow**: Original files are backed up before processing
-- **Metadata preservation**: Audio tags (ID3v2, Vorbis comment, BWF) are preserved during processing, and files are overwritten in place so Rekordbox cue points and other external metadata remain linked
-- **No limiter**: Pure gain adjustment only — dynamics are preserved
-- **Interactive CLI**: Guided step-by-step process with two-stage confirmation
-- **Scriptable CLI**: Non-interactive mode for pipelines and CI (paths, globs, and flags)
-- **Rekordbox playlist sorter**: `baken rbsort` produces a new playlist sorted by Camelot Key then BPM
-- **CDJ-safe transcoder** *(v3.0+)*: `baken cdjsafe` normalizes a gig playlist to 320 kbps CBR MP3 with cues and beatgrid carried over via XML
+🌐 **[baken.ravers.workers.dev](https://baken.ravers.workers.dev)** — full docs, workflow guides, and FAQ.
 
 ## Installation
 
@@ -39,25 +28,29 @@ baken requires ffmpeg. Package managers install it automatically.
 | **Arch Linux (AUR)** | `yay -S baken-bin` |
 | **Cargo** | `cargo install baken` (ffmpeg must be installed separately) |
 
-Pre-built binaries are available on the [Releases](https://github.com/M-Igashi/baken/releases) page (ffmpeg must be installed separately).
+Pre-built binaries are available on the [Releases](https://github.com/M-Igashi/baken/releases) page (ffmpeg must be installed separately). To build from source: `git clone https://github.com/M-Igashi/baken.git && cd baken && cargo build --release`.
 
-### Build from Source
-
-```bash
-git clone https://github.com/M-Igashi/baken.git
-cd baken
-cargo build --release
-```
-
-## Command Overview
+## Quick Start
 
 ```bash
-baken headroom [PATHS] [FLAGS]   # loudness analyzer & gain adjustment
-baken rbsort --xml <collection.xml> [FLAGS]   # Key+BPM playlist sorter
-baken cdjsafe --xml <collection.xml> --playlist <name> --out-dir <dir>   # CDJ-safe MP3 transcoder
+baken headroom ~/Music/DJ-Tracks                # analyze & bake loudness gain (interactive)
+baken rbsort --xml collection.xml               # sort every playlist by Key+BPM
+baken cdjsafe --xml collection.xml --playlist "Sets/Friday" --out-dir ~/Music/cdjsafe
 ```
 
 Run `baken --help` or `baken <subcommand> --help` for the full reference.
+
+> [!NOTE]
+> **Renamed from `headroom` at v3.0.0** ([#60](https://github.com/M-Igashi/baken/issues/60)). The old `headroom` install channels (brew/winget/cargo/AUR) no longer receive updates — reinstall via the `baken` packages above. The loudness analyzer now lives under the `baken headroom` subcommand.
+
+## Highlights
+
+- **Single binary** — [mp3rgain](https://github.com/M-Igashi/mp3rgain) built in; only ffmpeg required (and `rbsort` doesn't even need that)
+- **Truly lossless MP3/AAC gain** — global_gain header modification in 1.5 dB steps, no re-encode
+- **Uniform True Peak ceiling** — -0.5 dBTP by default (AES TD1008 §7B), tunable via `--tp-target`
+- **Non-destructive** — automatic backups; `rbsort`/`cdjsafe` never modify your original `collection.xml`
+- **Metadata preserved** — files overwritten in place, so Rekordbox cues, hot cues, and beatgrids stay linked
+- **Interactive or scriptable** — guided two-stage confirmation, or flags/globs for pipelines and CI
 
 ## Loudness Normalizer (`baken headroom`)
 
@@ -76,6 +69,9 @@ Run `baken --help` or `baken <subcommand> --help` for the full reference.
 6. Creates backups and processes files
 
 #### Example
+
+<details>
+<summary>Full interactive session (28 files analyzed → 10 processed)</summary>
 
 ```
 $ cd ~/Music/DJ-Tracks
@@ -137,6 +133,8 @@ $ baken headroom
   • 2 MP3 files (re-encoded)
   • 1 AAC/M4A files (re-encoded)
 ```
+
+</details>
 
 ### Usage
 
