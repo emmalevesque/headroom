@@ -1,14 +1,13 @@
-# Bake'n Deck 3.0.1 — faster lossless gain via mp3rgain 2.10
+# Bake'n Deck 3.0.2 — mp3rgain 3.0
 
 ## Highlights
 
-- **Updated built-in mp3rgain library from 2.9.6 to 2.10.0.** The gain-apply pipeline now reads each file once instead of twice, roughly halving I/O on large batches, and APE tag-only updates rewrite just the file tail. Output stays bit-identical — this is a pure performance update, no behavior changes.
+- **Updated built-in mp3rgain library from 2.10 to 3.0.** The 3.0 major release trims unused public API surface; gain application itself is unchanged and output stays bit-identical. Adapted the AAC gain call to the new API.
 
 ## Other Changes
 
-- Deduplicated the shared interactive/scriptable pipeline in `cli.rs`
-- Codebase simplification: deduplicated XML helpers, fixed a potential panic on non-ASCII paths, misc cleanups
-- Added `homepage` to crate metadata (now live on crates.io)
-- Excluded `web/` from the crates.io package
+- Restructured README top: badges, subcommand table, quick start
+- Dependency updates: clap 4.6.2, quinn-proto 0.11.16, and other minor/patch bumps
+- CI: bumped actions/checkout, softprops/action-gh-release, dtolnay/rust-toolchain
 
-**Full Changelog**: https://github.com/M-Igashi/baken/compare/v3.0.0...v3.0.1
+**Full Changelog**: https://github.com/M-Igashi/baken/compare/v3.0.1...v3.0.2

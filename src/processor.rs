@@ -127,7 +127,7 @@ fn apply_gain_native(file_path: &Path, gain_steps: i32, format: LossyFormat) -> 
         LossyFormat::Mp3 => mp3rgain::apply_gain(file_path, gain_steps)
             .map(|_| ())
             .context("mp3rgain failed to apply MP3 gain"),
-        LossyFormat::Aac => mp3rgain::aac::apply_aac_gain(file_path, gain_steps)
+        LossyFormat::Aac => mp3rgain::aac::apply_aac_gain_to_path(file_path, file_path, gain_steps)
             .map(|_| ())
             .context("mp3rgain failed to apply AAC gain"),
     }
