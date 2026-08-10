@@ -1,13 +1,14 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use console::{style, Style};
-use dialoguer::{theme::ColorfulTheme, Confirm, Input};
+use dialoguer::{theme::ColorfulTheme, Confirm};
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 
-use crate::analyzer::{self, AudioAnalysis, TpTargetMode};
+use crate::analyzer::{self, AudioAnalysis, TpTargetMode, MIN_EFFECTIVE_GAIN};
 use crate::args::{Cli, Command, HeadroomArgs};
+use crate::config::Config;
 use crate::processor;
 use crate::rbsort;
 use crate::report::{self, AnalysisSummary};
@@ -21,11 +22,11 @@ pub fn run() -> Result<()> {
     match cli.command {
         Command::Rbsort(args) => rbsort::run(&args),
         Command::Cdjsafe(args) => crate::cdjsafe::run(&args),
-        Command::Headroom(args) => run_headroom(&args),
+        Command::Headroom(args) => run_headroom(&args, &config),
     }
 }
 
-fn run_headroom(args: &HeadroomArgs) -> Result<()> {
+fn run_headroom(args: &HeadroomArgs, config: &Config) -> Result<()> {
     print_banner();
 
     // Runs in the background during analysis; the notification is printed
@@ -38,9 +39,9 @@ fn run_headroom(args: &HeadroomArgs) -> Result<()> {
     print_tp_target_banner(tp_mode);
 
     let result = if args.is_non_interactive() {
-        run_scriptable(args, tp_mode)
+        run_scriptable(args, tp_mode, config)
     } else {
-        run_interactive(tp_mode)
+        run_interactive(tp_mode, config)
     };
 
     if let Some(handle) = update_check {
@@ -141,7 +142,7 @@ fn select_files(
         .collect()
 }
 
-fn run_interactive(tp_mode: TpTargetMode) -> Result<()> {
+fn run_interactive(tp_mode: TpTargetMode, config: &Config) -> Result<()> {
     let target_dir = std::env::current_dir().context("Failed to get current directory")?;
 
     println!(
@@ -187,12 +188,12 @@ fn run_interactive(tp_mode: TpTargetMode) -> Result<()> {
         None
     };
 
-    process_files(&files_to_process, &target_dir, backup_dir.as_deref())?;
+    process_files(&files_to_process, &target_dir, backup_dir.as_deref(), config.defaults.tag_comment, &config.comment.separator)?;
     print_final_summary(&files_to_process);
     Ok(())
 }
 
-fn run_scriptable(cli: &HeadroomArgs, tp_mode: TpTargetMode) -> Result<()> {
+fn run_scriptable(cli: &HeadroomArgs, tp_mode: TpTargetMode, config: &Config) -> Result<()> {
     let (files, base_dir) = if cli.paths.is_empty() {
         let cwd = std::env::current_dir().context("Failed to get current directory")?;
         (scanner::scan_audio_files(&cwd), cwd)
@@ -208,7 +209,7 @@ fn run_scriptable(cli: &HeadroomArgs, tp_mode: TpTargetMode) -> Result<()> {
         return Ok(());
     };
 
-    if cli.report_enabled() {
+    if cli.report_enabled(config.defaults.report) {
         let explicit_path = cli
             .report
             .as_ref()
@@ -222,7 +223,7 @@ fn run_scriptable(cli: &HeadroomArgs, tp_mode: TpTargetMode) -> Result<()> {
         return Ok(());
     }
 
-    let files_to_process = select_files(&all_analyses, cli.lossless_enabled(), cli.reencode_enabled());
+    let files_to_process = select_files(&all_analyses, cli.lossless_enabled(config.defaults.lossless), cli.reencode_enabled());
     if files_to_process.is_empty() {
         println!("{} No files to process with current flags.", style("ℹ").blue());
         return Ok(());
@@ -240,7 +241,7 @@ fn run_scriptable(cli: &HeadroomArgs, tp_mode: TpTargetMode) -> Result<()> {
         None
     };
 
-    process_files(&files_to_process, &base_dir, backup_dir.as_deref())?;
+    process_files(&files_to_process, &base_dir, backup_dir.as_deref(), config.defaults.tag_comment, &config.comment.separator)?;
     print_final_summary(&files_to_process);
     Ok(())
 }
@@ -412,7 +413,7 @@ fn analyze_files(files: &[PathBuf], tp_mode: TpTargetMode) -> Result<Vec<AudioAn
     Ok(analyses)
 }
 
-fn resolve_backup_dir(cli: &Cli, config: &Config, base_dir: &Path) -> Result<Option<PathBuf>> {
+fn resolve_backup_dir(cli: &HeadroomArgs, config: &Config, base_dir: &Path) -> Result<Option<PathBuf>> {
     let want_backup = (cli.backup.is_some() || config.defaults.backup) && !cli.no_backup;
     if !want_backup {
         return Ok(None);
@@ -537,8 +538,8 @@ fn process_files(
 
     // Each file is processed independently; ProgressBar is thread-safe.
     analyses.par_iter().for_each(|analysis| {
-        if let Err(e) = processor::process_file(analysis, base_dir, backup_dir) {
-            pb.println(format!(
+        match processor::process_file(analysis, base_dir, backup_dir) {
+            Err(e) => pb.println(format!(
                 "{} {}: {}",
                 style("⚠").yellow(),
                 analysis.filename,

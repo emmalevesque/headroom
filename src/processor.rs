@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use id3::{TagLike, Version};
+use id3::{Tag, TagLike, Version};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -22,7 +22,7 @@ pub fn ensure_backup_dir(backup_dir: &Path) -> Result<PathBuf> {
     Ok(backup_dir.to_path_buf())
 }
 
-fn backup_file(file_path: &Path, base_dir: &Path, backup_dir: &Path) -> Result<PathBuf> {
+pub fn backup_file(file_path: &Path, base_dir: &Path, backup_dir: &Path) -> Result<PathBuf> {
     // Preserve directory structure relative to base_dir so sibling files with
     // the same name in different folders don't collide in the backup.
     // base_dir can be empty (mixed-root inputs), making strip_prefix return the
@@ -169,6 +169,118 @@ fn apply_gain_reencode(
         "ffmpeg {} re-encode failed with all available encoders",
         label
     ))
+}
+
+pub fn build_soft_clip_filter(gain_db: f64, threshold_db: f64, clip_type: &str) -> String {
+    let threshold_linear = 10.0f64.powf(threshold_db / 20.0);
+    format!(
+        "volume={:.2}dB,asoftclip=type={}:threshold={:.6}",
+        gain_db, clip_type, threshold_linear
+    )
+}
+
+pub fn apply_soft_clip(
+    file_path: &Path,
+    gain_db: f64,
+    threshold_db: f64,
+    clip_type: &str,
+    bitrate_kbps: Option<u32>,
+) -> Result<()> {
+    let extension = file_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let filter = build_soft_clip_filter(gain_db, threshold_db, clip_type);
+    match extension.as_str() {
+        "mp3" => apply_soft_clip_reencode(file_path, &filter, bitrate_kbps, LossyFormat::Mp3),
+        "m4a" | "aac" => apply_soft_clip_reencode(file_path, &filter, bitrate_kbps, LossyFormat::Aac),
+        _ => apply_soft_clip_lossless(file_path, &filter, &extension),
+    }
+}
+
+fn apply_soft_clip_lossless(file_path: &Path, filter: &str, extension: &str) -> Result<()> {
+    let temp_path = file_path.with_extension(format!("tmp.{}", extension));
+    let mut cmd = Command::new("ffmpeg");
+    cmd.args(["-y", "-i"])
+        .arg(file_path)
+        .args(["-af", filter]);
+    match extension {
+        "flac" => cmd.args(["-c:a", "flac"]),
+        "aiff" | "aif" => cmd.args(["-c:a", "pcm_s24be", "-write_id3v2", "1"]),
+        "wav" => cmd.args(["-c:a", "pcm_s24le", "-write_bext", "1"]),
+        _ => &mut cmd,
+    };
+    cmd.arg(&temp_path);
+    let output = cmd
+        .output()
+        .context("Failed to execute ffmpeg for soft clip")?;
+    if !output.status.success() {
+        let _ = fs::remove_file(&temp_path);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("ffmpeg failed: {}", stderr));
+    }
+    fs::rename(&temp_path, file_path).context("Failed to rename processed file")
+}
+
+fn apply_soft_clip_reencode(
+    file_path: &Path,
+    filter: &str,
+    bitrate_kbps: Option<u32>,
+    format: LossyFormat,
+) -> Result<()> {
+    let temp_path = file_path.with_extension(format.temp_ext());
+    let bitrate = bitrate_kbps
+        .map(|kbps| format!("{}k", kbps))
+        .unwrap_or_else(|| format.default_bitrate().to_string());
+    for encoder in format.encoders() {
+        let output = Command::new("ffmpeg")
+            .args(["-y", "-i"])
+            .arg(file_path)
+            .args(["-af", filter, "-c:a", encoder, "-b:a", &bitrate])
+            .arg(&temp_path)
+            .output()
+            .context("Failed to execute ffmpeg for soft clip re-encode")?;
+        if output.status.success() {
+            return fs::rename(&temp_path, file_path)
+                .context("Failed to rename processed file");
+        }
+        let _ = fs::remove_file(&temp_path);
+    }
+    Err(anyhow!("ffmpeg soft clip re-encode failed with all available encoders"))
+}
+
+pub fn write_gain_comment(file_path: &Path, gain_db: f64, separator: &str) -> Result<()> {
+    let ext = file_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if ext != "mp3" {
+        return Ok(());
+    }
+    let mut tag = Tag::read_from_path(file_path)
+        .unwrap_or_else(|_| Tag::new());
+    let gain_str = format!("{:+.1}dB", gain_db);
+    let existing: String = tag
+        .comments()
+        .next()
+        .map(|c| c.text.clone())
+        .unwrap_or_default();
+    let new_text = if existing.is_empty() {
+        gain_str
+    } else {
+        format!("{}{}{}", gain_str, separator, existing)
+    };
+    tag.remove_comment(Some(""), None);
+    tag.add_frame(id3::frame::Comment {
+        lang: "eng".to_string(),
+        description: String::new(),
+        text: new_text,
+    });
+    tag.write_to_path(file_path, Version::Id3v24)
+        .context("Failed to write ID3v2 comment tag")?;
+    Ok(())
 }
 
 pub fn process_file(

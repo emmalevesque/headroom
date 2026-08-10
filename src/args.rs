@@ -74,6 +74,10 @@ pub struct HeadroomArgs {
     #[arg(long, value_name = "DIR", num_args = 0..=1, default_missing_value = "")]
     pub backup: Option<PathBuf>,
 
+    /// Skip backup even when enabled by config default
+    #[arg(long)]
+    pub no_backup: bool,
+
     /// Generate CSV report at PATH (default: <target>/baken_report_<timestamp>.csv)
     #[arg(long, value_name = "PATH", num_args = 0..=1, default_missing_value = "", conflicts_with = "no_report")]
     pub report: Option<PathBuf>,
@@ -100,6 +104,7 @@ impl HeadroomArgs {
             || self.reencode
             || self.no_reencode
             || self.backup.is_some()
+            || self.no_backup
             || self.report.is_some()
             || self.no_report
             || self.analyze_only
