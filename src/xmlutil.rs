@@ -84,3 +84,51 @@ pub(crate) fn emit_playlist<W: std::io::Write>(
     writer.write_event(Event::End(BytesEnd::new("NODE")))?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quick_xml::events::BytesStart;
+
+    fn start_with_attr(tag: &str, key: &str, val: &str) -> BytesStart<'static> {
+        let mut e = BytesStart::new(tag.to_owned());
+        e.push_attribute((key, val));
+        e
+    }
+
+    #[test]
+    fn get_attr_returns_value() {
+        let e = start_with_attr("COLLECTION", "Entries", "5");
+        assert_eq!(get_attr(&e, b"Entries").unwrap(), Some("5".to_string()));
+    }
+
+    #[test]
+    fn get_attr_missing_returns_none() {
+        let e = start_with_attr("COLLECTION", "Entries", "5");
+        assert_eq!(get_attr(&e, b"Missing").unwrap(), None);
+    }
+
+    #[test]
+    fn bump_count_attr_increments_existing() {
+        let e = start_with_attr("COLLECTION", "Entries", "3");
+        let bumped = bump_count_attr(&e, b"Entries", 2).unwrap();
+        assert_eq!(get_attr(&bumped, b"Entries").unwrap(), Some("5".to_string()));
+    }
+
+    #[test]
+    fn bump_count_attr_adds_missing_attr() {
+        let e = BytesStart::new("COLLECTION");
+        let bumped = bump_count_attr(&e, b"Entries", 1).unwrap();
+        assert_eq!(get_attr(&bumped, b"Entries").unwrap(), Some("1".to_string()));
+    }
+
+    #[test]
+    fn bump_count_attr_preserves_other_attrs() {
+        let mut e = BytesStart::new("NODE");
+        e.push_attribute(("Name", "MyList"));
+        e.push_attribute(("Entries", "2"));
+        let bumped = bump_count_attr(&e, b"Entries", 1).unwrap();
+        assert_eq!(get_attr(&bumped, b"Name").unwrap(), Some("MyList".to_string()));
+        assert_eq!(get_attr(&bumped, b"Entries").unwrap(), Some("3".to_string()));
+    }
+}

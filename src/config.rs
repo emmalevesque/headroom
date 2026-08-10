@@ -108,3 +108,37 @@ fn config_path() -> Option<PathBuf> {
         .ok()
         .map(|h| PathBuf::from(h).join(".headroom.toml"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_config_matches_documented_values() {
+        let c = Config::default();
+        assert_eq!(c.comment.separator, " | ");
+        assert!(c.defaults.lossless, "lossless should default to true");
+        assert!(!c.defaults.reencode);
+        assert!(!c.defaults.tag_comment);
+        assert!(!c.defaults.backup);
+        assert!(c.defaults.report, "report should default to true");
+    }
+
+    #[test]
+    fn partial_toml_preserves_other_defaults() {
+        let cfg: Config = toml::from_str("[defaults]\nlossless = false\n").unwrap();
+        assert!(!cfg.defaults.lossless);
+        assert_eq!(cfg.comment.separator, " | ");
+        assert!(cfg.defaults.report);
+    }
+
+    #[test]
+    fn full_toml_roundtrip() {
+        let toml = "[comment]\nseparator = \" — \"\n[defaults]\nlossless = true\nreencode = true\ntag_comment = true\nbackup = true\nreport = false\n";
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.comment.separator, " — ");
+        assert!(cfg.defaults.tag_comment);
+        assert!(cfg.defaults.backup);
+        assert!(!cfg.defaults.report);
+    }
+}

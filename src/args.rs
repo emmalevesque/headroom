@@ -201,3 +201,124 @@ pub struct RbsortArgs {
     #[arg(long, value_name = "NAME")]
     pub name: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analyzer::TpTargetMode;
+
+    fn base() -> HeadroomArgs {
+        HeadroomArgs {
+            paths: vec![],
+            tp_target: None,
+            tp_split_bitrate: false,
+            lossless: false,
+            no_lossless: false,
+            reencode: false,
+            no_reencode: false,
+            backup: None,
+            no_backup: false,
+            report: None,
+            no_report: false,
+            analyze_only: false,
+            no_update_check: false,
+        }
+    }
+
+    #[test]
+    fn lossless_explicit_flag_overrides_default() {
+        let mut a = base();
+        a.lossless = true;
+        assert!(a.lossless_enabled(false));
+        a = base();
+        a.no_lossless = true;
+        assert!(!a.lossless_enabled(true));
+    }
+
+    #[test]
+    fn lossless_falls_back_to_default() {
+        assert!(!base().lossless_enabled(false));
+        assert!(base().lossless_enabled(true));
+    }
+
+    #[test]
+    fn reencode_only_enabled_by_flag() {
+        assert!(!base().reencode_enabled());
+        let mut a = base();
+        a.reencode = true;
+        assert!(a.reencode_enabled());
+    }
+
+    #[test]
+    fn report_no_report_flag_wins_over_default() {
+        let mut a = base();
+        a.no_report = true;
+        assert!(!a.report_enabled(true));
+    }
+
+    #[test]
+    fn report_explicit_path_wins_over_default() {
+        let mut a = base();
+        a.report = Some(PathBuf::from("out.csv"));
+        assert!(a.report_enabled(false));
+    }
+
+    #[test]
+    fn report_falls_back_to_default() {
+        assert!(!base().report_enabled(false));
+        assert!(base().report_enabled(true));
+    }
+
+    #[test]
+    fn is_non_interactive_false_with_no_flags() {
+        assert!(!base().is_non_interactive());
+    }
+
+    #[test]
+    fn is_non_interactive_true_with_paths() {
+        let mut a = base();
+        a.paths = vec!["music/".to_string()];
+        assert!(a.is_non_interactive());
+    }
+
+    #[test]
+    fn is_non_interactive_true_for_each_relevant_flag() {
+        let checks: &mut [(&str, Box<dyn FnMut(&mut HeadroomArgs)>)] = &mut [
+            ("lossless", Box::new(|a| a.lossless = true)),
+            ("no_lossless", Box::new(|a| a.no_lossless = true)),
+            ("reencode", Box::new(|a| a.reencode = true)),
+            ("no_reencode", Box::new(|a| a.no_reencode = true)),
+            ("analyze_only", Box::new(|a| a.analyze_only = true)),
+            ("no_report", Box::new(|a| a.no_report = true)),
+            ("no_backup", Box::new(|a| a.no_backup = true)),
+            ("tp_split_bitrate", Box::new(|a| a.tp_split_bitrate = true)),
+            ("backup", Box::new(|a| a.backup = Some(PathBuf::from("")))),
+            ("report", Box::new(|a| a.report = Some(PathBuf::from("")))),
+            ("tp_target", Box::new(|a| a.tp_target = Some(-1.0))),
+        ];
+        for (name, set) in checks.iter_mut() {
+            let mut a = base();
+            set(&mut a);
+            assert!(a.is_non_interactive(), "expected non-interactive for {name}");
+        }
+    }
+
+    #[test]
+    fn tp_mode_default_is_uniform_minus_half() {
+        assert!(matches!(base().tp_mode(), TpTargetMode::Uniform(t) if t == -0.5));
+    }
+
+    #[test]
+    fn tp_mode_explicit_target() {
+        let mut a = base();
+        a.tp_target = Some(-1.0);
+        assert!(matches!(a.tp_mode(), TpTargetMode::Uniform(t) if (t - -1.0).abs() < 1e-9));
+    }
+
+    #[test]
+    fn tp_mode_split_bitrate() {
+        let mut a = base();
+        a.tp_split_bitrate = true;
+        assert!(matches!(a.tp_mode(), TpTargetMode::SplitBitrate(_, _)));
+    }
+}

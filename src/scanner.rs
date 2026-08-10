@@ -119,3 +119,48 @@ pub fn is_mp3(path: &Path) -> bool {
 pub fn is_aac(path: &Path) -> bool {
     has_extension(path, AAC_EXTENSIONS)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn supported_extensions_covers_common_formats() {
+        let exts = get_supported_extensions();
+        for expected in ["mp3", "flac", "m4a", "wav", "aiff", "aac"] {
+            assert!(exts.contains(&expected), "missing extension: {expected}");
+        }
+    }
+
+    #[test]
+    fn is_mp3_case_insensitive() {
+        assert!(is_mp3(Path::new("track.mp3")));
+        assert!(is_mp3(Path::new("track.MP3")));
+        assert!(!is_mp3(Path::new("track.flac")));
+        assert!(!is_mp3(Path::new("track")));
+    }
+
+    #[test]
+    fn is_aac_recognizes_all_variants() {
+        assert!(is_aac(Path::new("track.m4a")));
+        assert!(is_aac(Path::new("track.aac")));
+        assert!(is_aac(Path::new("track.mp4")));
+        assert!(is_aac(Path::new("track.M4A")));
+        assert!(!is_aac(Path::new("track.mp3")));
+        assert!(!is_aac(Path::new("track.flac")));
+    }
+
+    #[test]
+    fn mac_resource_fork_files_not_audio_candidates() {
+        // Files starting with ._ are macOS resource fork remnants and must be skipped.
+        assert!(!is_audio_candidate(Path::new("._track.mp3")));
+        assert!(is_audio_candidate(Path::new("track.mp3")));
+    }
+
+    #[test]
+    fn non_audio_extensions_not_candidates() {
+        assert!(!is_audio_candidate(Path::new("image.jpg")));
+        assert!(!is_audio_candidate(Path::new("doc.pdf")));
+        assert!(!is_audio_candidate(Path::new("track")));
+    }
+}

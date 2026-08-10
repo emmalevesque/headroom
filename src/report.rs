@@ -225,3 +225,84 @@ impl AnalysisSummary {
         self.total_lossless() + self.total_reencode() > 0
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analyzer::{AudioAnalysis, GainMethod};
+    use std::path::PathBuf;
+
+    fn make_analysis(method: GainMethod) -> AudioAnalysis {
+        AudioAnalysis {
+            filename: "test.flac".to_string(),
+            path: PathBuf::from("test.flac"),
+            input_i: -8.0,
+            input_tp: -0.1,
+            bitrate_kbps: None,
+            target_tp: -0.5,
+            headroom: 7.5,
+            gain_method: method,
+            effective_gain: 7.5,
+            lossless_gain_steps: 5,
+        }
+    }
+
+    #[test]
+    fn empty_slice_not_processable() {
+        let s = AnalysisSummary::from_analyses(&[]);
+        assert!(!s.has_processable());
+        assert_eq!(s.total_lossless(), 0);
+        assert_eq!(s.total_reencode(), 0);
+    }
+
+    #[test]
+    fn counts_each_method_independently() {
+        let analyses = vec![
+            make_analysis(GainMethod::FfmpegLossless),
+            make_analysis(GainMethod::Mp3Lossless),
+            make_analysis(GainMethod::Mp3Lossless),
+            make_analysis(GainMethod::AacLossless),
+            make_analysis(GainMethod::Mp3Reencode),
+            make_analysis(GainMethod::AacReencode),
+            make_analysis(GainMethod::None),
+        ];
+        let s = AnalysisSummary::from_analyses(&analyses);
+        assert_eq!(s.lossless_count, 1);
+        assert_eq!(s.mp3_lossless_count, 2);
+        assert_eq!(s.aac_lossless_count, 1);
+        assert_eq!(s.mp3_reencode_count, 1);
+        assert_eq!(s.aac_reencode_count, 1);
+    }
+
+    #[test]
+    fn total_lossless_sums_all_lossless_variants() {
+        let analyses = vec![
+            make_analysis(GainMethod::FfmpegLossless),
+            make_analysis(GainMethod::Mp3Lossless),
+            make_analysis(GainMethod::AacLossless),
+        ];
+        let s = AnalysisSummary::from_analyses(&analyses);
+        assert_eq!(s.total_lossless(), 3);
+        assert_eq!(s.total_reencode(), 0);
+        assert!(s.has_processable());
+    }
+
+    #[test]
+    fn total_reencode_sums_both_reencode_variants() {
+        let analyses = vec![
+            make_analysis(GainMethod::Mp3Reencode),
+            make_analysis(GainMethod::AacReencode),
+        ];
+        let s = AnalysisSummary::from_analyses(&analyses);
+        assert_eq!(s.total_lossless(), 0);
+        assert_eq!(s.total_reencode(), 2);
+        assert!(s.has_processable());
+    }
+
+    #[test]
+    fn none_only_is_not_processable() {
+        let analyses = vec![make_analysis(GainMethod::None), make_analysis(GainMethod::None)];
+        let s = AnalysisSummary::from_analyses(&analyses);
+        assert!(!s.has_processable());
+    }
+}
